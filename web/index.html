@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DDCCI Monitor Tool</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <aside id="sidebar">
+            <div class="sidebar-header">
+                <h2>Monitors</h2>
+                <button id="btn-refresh" title="Refresh monitor list">&#x21bb;</button>
+            </div>
+            <ul id="monitor-list">
+                <li class="monitor-item empty">No monitors detected</li>
+            </ul>
+            <div class="sidebar-footer">
+                <span id="status-text">Ready</span>
+            </div>
+        </aside>
+
+        <main id="main-panel">
+            <div id="welcome" class="panel-state visible">
+                <div class="welcome-icon">&#x1f5b5;</div>
+                <h1>DDCCI Monitor Tool</h1>
+                <p>Select a monitor from the sidebar to view and adjust settings.</p>
+            </div>
+
+            <div id="controls" class="panel-state">
+                <div class="panel-header">
+                    <h2 id="monitor-name">Monitor Name</h2>
+                    <nav class="panel-tabs">
+                        <button class="tab-btn active" data-tab="controls">Controls</button>
+                        <button class="tab-btn" data-tab="log">Log</button>
+                        <button class="tab-btn" data-tab="raw">Raw</button>
+                    </nav>
+                </div>
+                <div class="tab-content" id="tab-controls">
+                    <div class="controls-scroll">
+                        <div id="vcp-controls"></div>
+
+                        <div class="section">
+                            <h3 class="section-title" id="caps-toggle">
+                                Capabilities <span class="arrow">&#x25b6;</span>
+                            </h3>
+                            <pre id="caps-content" class="hidden"></pre>
+                        </div>
+                    </div>
+                </div>
+                <div class="tab-content hidden" id="tab-log">
+                    <div class="log-toolbar">
+                        <button id="btn-clear-log">Clear</button>
+                    </div>
+                    <div id="log-entries"></div>
+                </div>
+                <div class="tab-content hidden" id="tab-raw">
+                    <div class="controls-scroll">
+                        <div class="raw-section">
+                            <h3 class="section-title">Command Builder</h3>
+                            <div class="raw-form">
+                                <div class="raw-row">
+                                    <label class="raw-label">Body hex:</label>
+                                    <input type="text" id="raw-hex-input" class="raw-hex-input"
+                                           placeholder="01 10">
+                                </div>
+                                <div class="raw-row">
+                                    <label class="raw-label">Full TX:</label>
+                                    <code id="raw-tx-hex" class="raw-code"></code>
+                                </div>
+                                <div class="raw-row">
+                                    <button id="btn-raw-send" class="raw-send-btn">Send</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="raw-section">
+                            <h3 class="section-title">Response</h3>
+                            <div id="raw-response" class="raw-response">
+                                <span class="raw-placeholder">Send a command to see the response</span>
+                            </div>
+                        </div>
+                        <div class="raw-section">
+                            <h3 class="section-title">Quick Commands</h3>
+                            <div class="raw-quick-list" id="raw-quick-list"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
