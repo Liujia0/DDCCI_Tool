@@ -631,9 +631,9 @@ std::wstring WebViewBridge::BuildRawCommandResponse(int monitorIndex, const std:
         if (caps.length() > 80) parseInfo += L"...";
 
     } else {
-        // Unknown command — can't send via Windows API
+        // Unknown command - can't send via Windows API
         rxHex = L"";
-        parseInfo = L"Unknown command — display only (TX computed)";
+        parseInfo = L"Unknown command - display only (TX computed)";
     }
 
     std::wostringstream ss;

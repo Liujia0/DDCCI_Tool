@@ -198,6 +198,52 @@ Capabilities strings that don't fit in one I2C packet (~26 bytes of data per seg
 
 ---
 
+## 后续扩展 / Future Extensions
+
+### 精确控制 DDC/CI 读时序（裸 I2C 传输层）
+
+**背景**：当前工具通过 Windows 高层 API `dxva2.lib`（`GetVCPFeatureAndVCPFeatureReply`、
+`CapabilitiesRequestAndCapabilitiesReply`）读写 DDC/CI。该调用把「发读请求 → 等待 → 读回复」
+**封装在一次原子系统调用内部**，应用层无任何插入点：
+
+```
+GetVCPFeatureAndVCPFeatureReply()   ← 一次调用
+  ├─ write（发读请求）        ┐
+  ├─ 内部等待 ~55ms           │ 全在显卡驱动/OS 内部，应用层不可见、不可改
+  └─ read（读回复）           ┘
+```
+
+- 我们能加的 `Sleep` 只能落在**调用之前**或**之后**，是**叠加**在驱动内部 ~55ms 之上的空闲时间，
+  逻辑分析仪上 write→read 的间隔**不变**。
+- 因此「指令等待时间」这类设置在 dxva2 路径下**无法真正生效**（已于本轮回退删除）。
+- 若「读时序可控」成为硬需求，必须**绕开 dxva2，改用裸 I2C 分步事务**：
+  `i2c_write(读请求) → Sleep(delayMs) → i2c_read(回复)`，三步独立，等待时间即可 1:1 映射到线上。
+
+**方案 2 — 改用裸 I2C 传输层**。按显卡 / 接入方式选择后端：
+
+| 后端 | 适用场景 | 关键 API |
+|------|----------|----------|
+| **IGCL**（Intel Graphics Control Library） | Intel 核显 / Arc 独显，直连真实显示器 | I2C AUX：write → 自定义等待 → read |
+| **AMD ADL** / **NVIDIA NvAPI** | 对应 A 卡 / N 卡 | 各家 I2C 透传接口 |
+| **CH341 / FTDI USB-I2C 转接板** | 脱机 / 产线 / 工厂测试 | `i2c_write` / `i2c_read`，`CH341SetDelaymS` |
+
+实现要点：抽象出 `IDdcTransport` 接口（`Write` / `Read` / `SetReplyDelayMs`），
+`MonitorManager` 的 Get/Set/Capabilities 改为「写请求 → 延时 → 读回复」分步调用；
+UI 恢复「读回复等待时间(ms)」设置项，其值传到传输层的 `SetReplyDelayMs`。
+
+**方案 3 — 参考 CVTE JyCLI 实现**。`D:\MonitorDockFiles\PackageCache\JyCLI\1.5.1\JyCLI.exe`
+（CVTE 绝影架构命令行测试工具）已用同样思路，可作为实现参考：
+
+- 传输层依赖 `MyCL.I2c.NoDrv`（无驱动直连 I2C 库）。
+- 走 **IGCL** 直连真实显示器（`I2CController::aux_write_read_restart`、`aux_read_auto_ddcci`），
+  同时支持 **CH341 / FTDI** USB-I2C 转接板（`CH341_IIC::i2c_write/i2c_read`、`CH341SetDelaymS`）。
+- 其读函数内联了 `<Read>g__DelayMs` —— 即 write 与 read 之间的可配置等待，正是逻辑分析仪量到的
+  ~55ms 那段。
+- 待办：反编译其托管程序集（单文件压缩打包，`strings` 取不到默认延时值与完整命令表），
+  扒出默认 DelayMs 值、IGCL/CH341 的 I2C 调用序列与 DDC/CI 时序参数，作为方案 2 的落地依据。
+
+---
+
 ## Known Issues & Gotchas
 
 1. **`PostWebMessageAsJson` unreliable** — this API sometimes fails to trigger JS `message` events. Workaround: C++ uses `ExecuteScript` to call `window.__bridgeReceive(json)` directly.
@@ -208,7 +254,7 @@ Capabilities strings that don't fit in one I2C packet (~26 bytes of data per seg
 
 4. **Monitor names all "Generic PnP Monitor"** — `szPhysicalMonitorDescription` is always generic. CCD API (`QueryDisplayConfig`) was tried but index matching between CCD paths and DDC/CI monitors is unreliable. The capabilities `model()` tag is the only correct approach.
 
-5. **Code page 936 warning** — `WebViewBridge.cpp` may show C4819 warning in Chinese locale VS. File should be saved as UTF-8 with BOM.
+5. **~~Code page 936 warning~~（已修复）** — 此前 `WebViewBridge.cpp` 含破折号 `—`（U+2014）在中文区 VS 触发 C4819；已替换为 ASCII `-`。同时 `MonitorManager.cpp` 的 `WriteLog` 改用 `WideCharToMultiByte` 转 UTF-8，消除了 wchar→char 的 C4244 截断警告。源文件保持纯 ASCII 即可，无需 BOM。
 
 6. **WebView2 runtime required** — users need the Evergreen WebView2 Runtime installed, or the fixed version DLLs bundled.
 

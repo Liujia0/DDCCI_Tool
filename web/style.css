@@ -654,7 +654,7 @@ body::after {
 .log-time {
     color: var(--text-muted);
     flex-shrink: 0;
-    min-width: 72px;
+    min-width: 96px;
     font-size: 11px;
 }
 

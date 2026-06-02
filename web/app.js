@@ -52,7 +52,8 @@
         var now = new Date();
         var time = ('0' + now.getHours()).slice(-2) + ':'
                  + ('0' + now.getMinutes()).slice(-2) + ':'
-                 + ('0' + now.getSeconds()).slice(-2);
+                 + ('0' + now.getSeconds()).slice(-2) + '.'
+                 + ('00' + now.getMilliseconds()).slice(-3);
         logRecords.push({ time: time, dir: dir, op: op, detail: detail,
                          sendHex: sendHex || '', recvHex: recvHex || '' });
         if (logRecords.length > MAX_LOG) logRecords.shift();

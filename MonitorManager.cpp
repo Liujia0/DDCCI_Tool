@@ -110,7 +110,16 @@ static void WriteLog(const std::wstring& msg) {
     HANDLE hFile = CreateFileW(logPath.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ,
                                nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (hFile != INVALID_HANDLE_VALUE) {
-        std::string line(msg.begin(), msg.end());
+        std::string line;
+        if (!msg.empty()) {
+            int len = WideCharToMultiByte(CP_UTF8, 0, msg.c_str(), static_cast<int>(msg.size()),
+                                          nullptr, 0, nullptr, nullptr);
+            if (len > 0) {
+                line.resize(len);
+                WideCharToMultiByte(CP_UTF8, 0, msg.c_str(), static_cast<int>(msg.size()),
+                                    &line[0], len, nullptr, nullptr);
+            }
+        }
         line += "\r\n";
         DWORD written = 0;
         WriteFile(hFile, line.c_str(), static_cast<DWORD>(line.size()), &written, nullptr);
