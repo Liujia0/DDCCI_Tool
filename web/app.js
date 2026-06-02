@@ -1,36 +1,29 @@
 (function () {
     'use strict';
 
-    // ---- VCP feature definitions ----
+    // ---- MCCS table accessors ----
+    // The full VCP definition table lives in mccs.js (window.MCCS), loaded first.
 
-    var INPUT_SOURCES = {
-        0x01: 'VGA-1', 0x02: 'VGA-2', 0x03: 'DVI-1', 0x04: 'DVI-2',
-        0x05: 'Composite 1', 0x06: 'Composite 2', 0x07: 'S-Video 1',
-        0x08: 'S-Video 2', 0x09: 'Tuner 1', 0x0A: 'Tuner 2', 0x0B: 'Tuner 3',
-        0x0C: 'Component 1', 0x0D: 'Component 2', 0x0E: 'Component 3',
-        0x0F: 'DisplayPort 1', 0x10: 'DisplayPort 2',
-        0x11: 'HDMI 1', 0x12: 'HDMI 2',
-        0x1A: 'USB-C'
-    };
+    var MCCS = window.MCCS || { groups: [], vcp: {} };
 
-    var SLIDER_FEATURES = [
-        { code: 0x10, label: 'Brightness' },
-        { code: 0x12, label: 'Contrast' },
-        { code: 0x16, label: 'Red Gain' },
-        { code: 0x18, label: 'Green Gain' },
-        { code: 0x1A, label: 'Blue Gain' }
-    ];
+    function hex2(code) {
+        return '0x' + ('0' + code.toString(16).toUpperCase()).slice(-2);
+    }
 
-    var SELECT_FEATURES = [
-        { code: 0x60, label: 'Input Source', options: INPUT_SOURCES }
-    ];
+    function vcpDef(code) {
+        return MCCS.vcp[code] || null;
+    }
+
+    function vcpCodeName(code) {
+        var def = vcpDef(code);
+        return def ? def.name : hex2(code);
+    }
 
     // ---- State ----
 
     var monitors = [];
     var activeMonitorIndex = -1;
-    var supportedVCPSet = {};   // cache: {vcpCode: true} for current monitor
-    var pendingGetVCP = {};
+    var currentCapsMap = {};   // {vcpCode: [subValues]} parsed from capabilities
 
     // ---- DOM refs ----
 
@@ -53,23 +46,6 @@
 
     var logRecords = [];
     var MAX_LOG = 500;
-
-    var VCP_NAMES = {
-        0x02: 'New Control', 0x04: 'Restore Factory', 0x05: 'Reset Bright/Cont',
-        0x06: 'Reset Geometry', 0x08: 'Reset Color', 0x0B: 'Color Temp Inc',
-        0x0C: 'Color Temp Req', 0x10: 'Brightness', 0x12: 'Contrast',
-        0x14: 'Color Preset', 0x16: 'Red Gain', 0x18: 'Green Gain', 0x1A: 'Blue Gain',
-        0x52: 'Active Control', 0x60: 'Input Source', 0x62: 'Audio Volume',
-        0x87: 'Audio Treble', 0x8D: 'Audio Mute', 0xAC: 'Power Mode',
-        0xAE: 'Auto Setup', 0xB6: 'Display Osd', 0xC0: 'Display Usage Time',
-        0xC6: 'Power Control', 0xC8: 'C9 Display Control', 0xC9: 'Display C9',
-        0xCA: 'OSD Language', 0xCC: 'OSD Timeout', 0xD6: 'DPMS', 0xDC: 'MagicBright',
-        0xDF: 'VCP Version', 0xE1: 'E1', 0xE2: 'E2', 0xE3: 'E3', 0xF7: 'F7'
-    };
-
-    function vcpCodeName(code) {
-        return VCP_NAMES[code] || ('0x' + code.toString(16).toUpperCase());
-    }
 
     function addLogEntry(dir, op, detail, sendHex, recvHex) {
         var now = new Date();
@@ -114,10 +90,14 @@
         logEntriesEl.scrollTop = logEntriesEl.scrollHeight;
     }
 
+    function vcpLabel(code) {
+        return vcpCodeName(code) + ' (' + hex2(code) + ')';
+    }
+
     function logSend(method, params) {
         var detail = '';
         if (method === 'getVCP' || method === 'setVCP') {
-            detail = vcpCodeName(params.vcpCode) + ' (0x' + params.vcpCode.toString(16).toUpperCase() + ')';
+            detail = vcpLabel(params.vcpCode);
             if (method === 'setVCP') detail += ' = ' + params.value;
         } else if (method === 'enumerateMonitors') {
             detail = 'Scan monitors';
@@ -133,15 +113,12 @@
             detail = (data.monitors ? data.monitors.length : 0) + ' monitor(s)';
         } else if (data.type === 'vcpFeature') {
             if (data.valid === false) {
-                detail = vcpCodeName(data.vcpCode) + ' (0x' + data.vcpCode.toString(16).toUpperCase() + ')'
-                       + ' = <read failed>';
+                detail = vcpLabel(data.vcpCode) + ' = <read failed>';
             } else {
-                detail = vcpCodeName(data.vcpCode) + ' (0x' + data.vcpCode.toString(16).toUpperCase() + ')'
-                       + ' = ' + data.current + '/' + data.max;
+                detail = vcpLabel(data.vcpCode) + ' = ' + data.current + '/' + data.max;
             }
         } else if (data.type === 'vcpSet') {
-            detail = vcpCodeName(data.vcpCode) + ' (0x' + data.vcpCode.toString(16).toUpperCase() + ')'
-                   + ' = ' + data.value;
+            detail = vcpLabel(data.vcpCode) + ' = ' + data.value;
         } else if (data.type === 'capabilities') {
             var preview = (data.capabilities || '').substring(0, 60);
             detail = preview + (data.capabilities && data.capabilities.length > 60 ? '...' : '');
@@ -200,14 +177,22 @@
 
         case 'capabilities':
             capsContentEl.textContent = data.capabilities || '(empty)';
-            supportedVCPSet = {};
-            if (data.supportedVCP) {
+
+            // Parse the capabilities string against the MCCS standard. The
+            // controls shown are driven entirely by vcp(...) — codes the
+            // monitor does not report are not rendered, and codes with no
+            // MCCS 2.2a definition (manufacturer-specific) are hidden.
+            var capsMap = parseCapsVCP(data.capabilities || '');
+            if (isEmptyMap(capsMap) && data.supportedVCP) {
+                // Fallback: caps string unreadable but host parsed a code list.
                 for (var s = 0; s < data.supportedVCP.length; s++) {
-                    supportedVCPSet[data.supportedVCP[s]] = true;
+                    capsMap[data.supportedVCP[s]] = [];
                 }
             }
-            buildVCPControls();
-            queryAllVCPFeatures();
+            currentCapsMap = capsMap;
+            buildVCPControls(capsMap);
+            queryAllVCPFeatures(capsMap);
+
             // Log each segment's send & receive individually.
             if (data.segments) {
                 for (var seg = 0; seg < data.segments.length; seg++) {
@@ -239,6 +224,300 @@
     window.__bridgeReceive = function(data) {
         dispatchResponse(data);
     };
+
+    // ---- Capabilities parsing ----
+
+    function isEmptyMap(obj) {
+        for (var k in obj) { if (obj.hasOwnProperty(k)) return false; }
+        return true;
+    }
+
+    // Parse the vcp(...) section of a capabilities string, including the
+    // per-code sub-value lists. e.g. "vcp(10 12 14(05 0B) 60(0F 11 12))"
+    //   -> { 16:[], 18:[], 20:[5,11], 96:[15,17,18] }   (keys are decimal)
+    function parseCapsVCP(caps) {
+        var map = {};
+        if (!caps) return map;
+        var pos = caps.indexOf('vcp(');
+        if (pos < 0) return map;
+        var i = pos + 4;
+        var depth = 1;
+        var curCode = -1;
+        var token = '';
+
+        function flush() {
+            if (token.length === 0) return;
+            var val = parseInt(token, 16);
+            token = '';
+            if (isNaN(val)) return;
+            if (depth === 1) {
+                curCode = val;
+                if (!map.hasOwnProperty(val)) map[val] = [];
+            } else if (depth === 2 && curCode >= 0) {
+                map[curCode].push(val);
+            }
+        }
+
+        while (i < caps.length && depth > 0) {
+            var c = caps.charAt(i);
+            if (c === '(') { flush(); depth++; i++; }
+            else if (c === ')') { flush(); depth--; i++; }
+            else if (/[0-9a-fA-F]/.test(c)) { token += c; i++; }
+            else { flush(); i++; }   // whitespace / separators
+        }
+        return map;
+    }
+
+    // ---- VCP controls (MCCS-driven) ----
+
+    function buildVCPControls(capsMap) {
+        vcpControlsEl.innerHTML = '';
+
+        var rendered = 0;
+        for (var g = 0; g < MCCS.groups.length; g++) {
+            var group = MCCS.groups[g];
+
+            // Collect supported, MCCS-defined codes belonging to this group.
+            var codes = [];
+            for (var codeStr in capsMap) {
+                if (!capsMap.hasOwnProperty(codeStr)) continue;
+                var code = parseInt(codeStr, 10);
+                var def = vcpDef(code);
+                if (def && def.group === group.id) codes.push(code);
+            }
+            if (codes.length === 0) continue;
+            codes.sort(function (a, b) { return a - b; });
+
+            var section = document.createElement('div');
+            section.className = 'vcp-group';
+
+            var title = document.createElement('h3');
+            title.className = 'vcp-group-title';
+            title.textContent = group.title;
+            section.appendChild(title);
+
+            for (var k = 0; k < codes.length; k++) {
+                var row = buildVCPRow(codes[k], capsMap[codes[k]]);
+                if (row) { section.appendChild(row); rendered++; }
+            }
+            vcpControlsEl.appendChild(section);
+        }
+
+        if (rendered === 0) {
+            var empty = document.createElement('div');
+            empty.className = 'vcp-empty';
+            empty.textContent = 'No MCCS-defined controls reported by this monitor.';
+            vcpControlsEl.appendChild(empty);
+        }
+    }
+
+    function buildVCPRow(code, subvals) {
+        var def = vcpDef(code);
+        if (!def) return null;
+
+        var row = document.createElement('div');
+        row.className = 'vcp-row';
+
+        var label = document.createElement('span');
+        label.className = 'vcp-label';
+        label.textContent = vcpLabel(code);
+        row.appendChild(label);
+
+        if (def.access === 'wo') {
+            appendAction(row, code, def);
+        } else if (def.type === 'NC' && (def.values || (subvals && subvals.length))) {
+            // Enumerated: either MCCS defines named values, or the monitor
+            // itself enumerated discrete sub-values in its capabilities.
+            if (def.access === 'ro') {
+                appendReadonly(row, code);
+            } else {
+                appendSelect(row, code, def, subvals);
+            }
+        } else if (def.type === 'C' || def.type === 'NC') {
+            // Continuous, or NC without an enumerable value set (e.g. volume):
+            // a byte-valued range. Read-only codes show a value, R/W get a slider.
+            if (def.access === 'ro') {
+                appendReadonly(row, code);
+            } else {
+                appendSlider(row, code);
+            }
+        } else {
+            // Table (T) codes carry structured data — show the raw value only.
+            appendReadonly(row, code);
+        }
+        return row;
+    }
+
+    function appendSlider(row, code) {
+        var slider = document.createElement('input');
+        slider.type = 'range';
+        slider.className = 'vcp-slider';
+        slider.min = 0;
+        slider.max = 100;
+        slider.value = 0;
+        slider.disabled = true;   // enabled once a value is read
+        slider.dataset.vcpCode = code;
+
+        var valSpan = document.createElement('span');
+        valSpan.className = 'vcp-value';
+        valSpan.id = 'val-' + code;
+        valSpan.textContent = '--';
+
+        slider.addEventListener('input', function () {
+            var span = document.getElementById('val-' + code);
+            if (span) span.textContent = slider.value;
+        });
+        slider.addEventListener('change', function () {
+            sendToHost('setVCP', { monitor: activeMonitorIndex, vcpCode: code, value: parseInt(slider.value) });
+        });
+
+        row.appendChild(slider);
+        row.appendChild(valSpan);
+    }
+
+    function appendSelect(row, code, def, subvals) {
+        var select = document.createElement('select');
+        select.className = 'vcp-select';
+        select.disabled = true;
+        select.dataset.vcpCode = code;
+
+        var placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = 'Detecting...';
+        select.appendChild(placeholder);
+
+        var labelMap = def.values || {};
+
+        // Options: the values the monitor enumerated in caps, or — if it
+        // listed none — all values MCCS defines for this code. Labels come
+        // from the MCCS table, falling back to the raw hex value.
+        var values;
+        if (subvals && subvals.length) {
+            values = subvals;
+        } else {
+            values = Object.keys(labelMap).map(function (k) { return parseInt(k, 10); });
+        }
+        for (var i = 0; i < values.length; i++) {
+            var v = values[i];
+            var opt = document.createElement('option');
+            opt.value = String(v);
+            opt.textContent = labelMap[v] || hex2(v);
+            select.appendChild(opt);
+        }
+
+        select.addEventListener('change', function () {
+            if (select.value !== '') {
+                sendToHost('setVCP', { monitor: activeMonitorIndex, vcpCode: code, value: parseInt(select.value) });
+            }
+        });
+
+        row.appendChild(select);
+    }
+
+    function appendReadonly(row, code) {
+        var span = document.createElement('span');
+        span.className = 'vcp-readonly';
+        span.id = 'val-' + code;
+        span.dataset.vcpCode = code;
+        span.textContent = '--';
+        row.appendChild(span);
+    }
+
+    function appendAction(row, code, def) {
+        var wrap = document.createElement('span');
+        wrap.className = 'vcp-actions';
+
+        if (def.values) {
+            // One button per documented action value (e.g. Save / Restore).
+            var keys = Object.keys(def.values).map(function (k) { return parseInt(k, 10); });
+            for (var i = 0; i < keys.length; i++) {
+                (function (v) {
+                    var btn = document.createElement('button');
+                    btn.className = 'vcp-action-btn';
+                    btn.textContent = def.values[v];
+                    btn.addEventListener('click', function () {
+                        sendToHost('setVCP', { monitor: activeMonitorIndex, vcpCode: code, value: v });
+                    });
+                    wrap.appendChild(btn);
+                })(keys[i]);
+            }
+        } else {
+            // Trigger action — any non-zero value performs it.
+            var btn = document.createElement('button');
+            btn.className = 'vcp-action-btn';
+            btn.textContent = 'Apply';
+            btn.addEventListener('click', function () {
+                sendToHost('setVCP', { monitor: activeMonitorIndex, vcpCode: code, value: 1 });
+            });
+            wrap.appendChild(btn);
+        }
+        row.appendChild(wrap);
+    }
+
+    function queryAllVCPFeatures(capsMap) {
+        for (var codeStr in capsMap) {
+            if (!capsMap.hasOwnProperty(codeStr)) continue;
+            var code = parseInt(codeStr, 10);
+            var def = vcpDef(code);
+            if (!def) continue;
+            if (def.access === 'ro' || def.access === 'rw') {
+                sendToHost('getVCP', { monitor: activeMonitorIndex, vcpCode: code });
+            }
+        }
+    }
+
+    function updateVCPUI(code, current, max, valid) {
+        var def = vcpDef(code);
+
+        // Slider
+        var slider = document.querySelector('.vcp-slider[data-vcp-code="' + code + '"]');
+        if (slider) {
+            var sVal = document.getElementById('val-' + code);
+            if (valid === false) {
+                slider.disabled = true;
+                if (sVal) sVal.textContent = 'err';
+            } else {
+                slider.disabled = false;
+                slider.max = max || 100;
+                slider.value = current;
+                if (sVal) sVal.textContent = current;
+            }
+        }
+
+        // Select
+        var select = document.querySelector('.vcp-select[data-vcp-code="' + code + '"]');
+        if (select) {
+            if (valid === false) {
+                select.disabled = true;
+            } else {
+                select.disabled = false;
+                select.value = String(current);
+                if (select.value !== String(current)) {
+                    // Monitor reported a value not in the option list — add it.
+                    var opt = document.createElement('option');
+                    opt.value = String(current);
+                    var nm = (def && def.values && def.values[current]) || ('Reserved (' + hex2(current) + ')');
+                    opt.textContent = nm;
+                    select.appendChild(opt);
+                    select.value = String(current);
+                }
+            }
+        }
+
+        // Read-only display
+        var ro = document.querySelector('.vcp-readonly[data-vcp-code="' + code + '"]');
+        if (ro) {
+            if (valid === false) {
+                ro.textContent = '<read failed>';
+            } else if (def && def.type === 'C') {
+                ro.textContent = max ? (current + ' / ' + max) : String(current);
+            } else if (def && def.values && def.values[current]) {
+                ro.textContent = def.values[current] + ' (' + hex2(current) + ')';
+            } else {
+                ro.textContent = current + ' (' + hex2(current) + ')';
+            }
+        }
+    }
 
     // ---- Raw command tab ----
 
@@ -398,152 +677,10 @@
         monitorNameEl.textContent = mon.name;
 
         // Capabilities-first: read caps, then build controls and query
-        // based on vcp(xx xx ...) in the response handler above.
-        supportedVCPSet = {};
+        // supported codes in the 'capabilities' response handler above.
+        currentCapsMap = {};
         vcpControlsEl.innerHTML = '';
         sendToHost('getCapabilities', { monitor: index });
-    }
-
-    function onMonitorItemClick(index) {
-        // Called from dynamically created items
-        selectMonitor(index);
-    }
-
-    // ---- VCP controls ----
-
-    function buildVCPControls() {
-        vcpControlsEl.innerHTML = '';
-
-        // Slider features — only for VCP codes the monitor supports
-        for (var i = 0; i < SLIDER_FEATURES.length; i++) {
-            var feat = SLIDER_FEATURES[i];
-            if (!supportedVCPSet[feat.code]) continue;
-
-            var row = document.createElement('div');
-            row.className = 'vcp-row';
-
-            var label = document.createElement('span');
-            label.className = 'vcp-label';
-            label.textContent = feat.label;
-
-            var slider = document.createElement('input');
-            slider.type = 'range';
-            slider.className = 'vcp-slider';
-            slider.min = 0;
-            slider.max = 100;
-            slider.value = 0;
-            slider.dataset.vcpCode = feat.code;
-
-            var valSpan = document.createElement('span');
-            valSpan.className = 'vcp-value';
-            valSpan.id = 'val-' + feat.code;
-            valSpan.textContent = '--';
-
-            slider.addEventListener('input', function (code, el) {
-                return function () {
-                    var v = parseInt(el.value);
-                    var span = document.getElementById('val-' + code);
-                    if (span) span.textContent = v;
-                };
-            }(feat.code, slider));
-
-            slider.addEventListener('change', function (code, el) {
-                return function () {
-                    sendToHost('setVCP', { monitor: activeMonitorIndex, vcpCode: code, value: parseInt(el.value) });
-                };
-            }(feat.code, slider));
-
-            row.appendChild(label);
-            row.appendChild(slider);
-            row.appendChild(valSpan);
-            vcpControlsEl.appendChild(row);
-        }
-
-        // Select features — only for VCP codes the monitor supports
-        for (var j = 0; j < SELECT_FEATURES.length; j++) {
-            var selFeat = SELECT_FEATURES[j];
-            if (!supportedVCPSet[selFeat.code]) continue;
-
-            var row = document.createElement('div');
-            row.className = 'vcp-row';
-
-            var label = document.createElement('span');
-            label.className = 'vcp-label';
-            label.textContent = selFeat.label;
-
-            var select = document.createElement('select');
-            select.className = 'vcp-select';
-            select.dataset.vcpCode = selFeat.code;
-
-            var placeholder = document.createElement('option');
-            placeholder.value = '';
-            placeholder.textContent = 'Detecting...';
-            select.appendChild(placeholder);
-
-            var codes = Object.keys(selFeat.options);
-            for (var k = 0; k < codes.length; k++) {
-                var opt = document.createElement('option');
-                opt.value = codes[k];
-                opt.textContent = selFeat.options[codes[k]];
-                select.appendChild(opt);
-            }
-
-            select.addEventListener('change', function (code, el) {
-                return function () {
-                    if (el.value !== '') {
-                        sendToHost('setVCP', { monitor: activeMonitorIndex, vcpCode: code, value: parseInt(el.value) });
-                    }
-                };
-            }(selFeat.code, select));
-
-            row.appendChild(label);
-            row.appendChild(select);
-            vcpControlsEl.appendChild(row);
-        }
-    }
-
-    function queryAllVCPFeatures() {
-        for (var i = 0; i < SLIDER_FEATURES.length; i++) {
-            if (supportedVCPSet[SLIDER_FEATURES[i].code]) {
-                sendToHost('getVCP', { monitor: activeMonitorIndex, vcpCode: SLIDER_FEATURES[i].code });
-            }
-        }
-        for (var j = 0; j < SELECT_FEATURES.length; j++) {
-            if (supportedVCPSet[SELECT_FEATURES[j].code]) {
-                sendToHost('getVCP', { monitor: activeMonitorIndex, vcpCode: SELECT_FEATURES[j].code });
-            }
-        }
-    }
-
-    function updateVCPUI(vcpCode, current, max, valid) {
-        // Update slider
-        var slider = document.querySelector('.vcp-slider[data-vcp-code="' + vcpCode + '"]');
-        if (slider) {
-            if (valid === false) {
-                slider.disabled = true;
-                var failSpan = document.getElementById('val-' + vcpCode);
-                if (failSpan) failSpan.textContent = 'err';
-            } else {
-                slider.disabled = false;
-                slider.max = max;
-                slider.value = current;
-                var valSpan = document.getElementById('val-' + vcpCode);
-                if (valSpan) {
-                    valSpan.textContent = current;
-                }
-            }
-        }
-
-        // Update select
-        var select = document.querySelector('.vcp-select[data-vcp-code="' + vcpCode + '"]');
-        if (select) {
-            if (valid === false) {
-                select.disabled = true;
-            } else {
-                select.disabled = false;
-                select.value = String(current);
-            }
-        }
     }
 
     // ---- Capabilities toggle ----

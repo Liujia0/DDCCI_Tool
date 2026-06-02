@@ -233,11 +233,12 @@ body {
 }
 
 .vcp-label {
-    width: 130px;
+    width: 220px;
     font-size: 13px;
     font-weight: 500;
     color: var(--text-secondary);
     flex-shrink: 0;
+    line-height: 1.3;
 }
 
 .vcp-slider {
@@ -301,6 +302,74 @@ body {
 
 .vcp-select:focus {
     border-color: var(--accent);
+}
+
+/* MCCS functional group sections */
+
+.vcp-group {
+    margin-bottom: 8px;
+}
+
+.vcp-group + .vcp-group {
+    margin-top: 20px;
+}
+
+.vcp-group-title {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--accent);
+    padding: 6px 0;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+}
+
+/* Read-only value display (RO / Table codes) */
+
+.vcp-readonly {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    word-break: break-word;
+}
+
+/* Write-only action buttons (restore / degauss / save) */
+
+.vcp-actions {
+    flex: 1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.vcp-action-btn {
+    padding: 6px 14px;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.vcp-action-btn:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent);
+}
+
+.vcp-action-btn:active {
+    background: var(--accent-bg);
+    border-color: var(--accent);
+}
+
+.vcp-empty {
+    padding: 24px 0;
+    font-size: 13px;
+    color: var(--text-muted);
 }
 
 /* Sections */

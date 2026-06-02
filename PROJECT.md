@@ -30,9 +30,10 @@ DDCCI_Tool/
 ├── WebViewBridge.h             # WebView2 host + JSON bridge declaration             (46 lines)
 ├── WebViewBridge.cpp           # WebView2 init, JS bridge, DDC/CI packet hex         (618 lines)
 └── web/
-    ├── index.html              # Main page: sidebar + tabs (Controls/Log/Raw)        (95 lines)
+    ├── index.html              # Main page: sidebar + tabs (Controls/Log/Raw)        (96 lines)
     ├── style.css               # Dark theme CSS                                      (665 lines)
     ├── logo.svg                # App logo (monitor + brightness motif, accent blue)
+    ├── mccs.js                 # MCCS 2.2a VCP definition table (152 codes)          (438 lines)
     └── app.js                  # Frontend logic, bridge, logging                     (595 lines)
 ```
 
@@ -140,12 +141,30 @@ Standard Win32 entry point:
 - Main panel: Controls tab (VCP sliders + capabilities viewer), Log tab, Raw command tab
 
 #### app.js (IIFE pattern)
-- **VCP definitions**: `SLIDER_FEATURES` (brightness 0x10, contrast 0x12, RGB gains 0x16/0x18/0x1A), `SELECT_FEATURES` (input source 0x60 with full source name map)
-- **Capabilities-first flow**: `selectMonitor()` → `getCapabilities` → on response, parse `supportedVCP[]`, `buildVCPControls()` (filters by supported codes), `queryAllVCPFeatures()` (only queries supported codes)
-- **Log system**: `logRecords[]` array (max 500), `addLogEntry(dir, op, detail, sendHex, recvHex)`, `renderLogEntries()` renders log with TX/RX hex rows. Per-segment capabilities logging with `<read failed>` fallback
+- **MCCS-driven controls**: control definitions come entirely from `web/mccs.js`
+  (`window.MCCS` — 152 VCP codes, grouped). No hardcoded feature list.
+- **Capabilities-first flow**: `selectMonitor()` → `getCapabilities` → on response,
+  `parseCapsVCP()` parses the raw `vcp(...)` list (including per-code sub-values, e.g.
+  `14(05 0B)`), `buildVCPControls()` renders one control per supported, MCCS-defined code,
+  grouped by MCCS functional category; `queryAllVCPFeatures()` reads every readable code.
+- **Type-appropriate widgets** (by MCCS `type`/`access`): Continuous (and value-less NC
+  byte ranges like audio volume) → slider; enumerated NC → `<select>` of named values
+  (options filtered to the caps sub-value list when present, else all MCCS values); RO /
+  Table → read-only value display (named for NC); WO → action button(s) (e.g. "Restore
+  Factory Defaults", Save/Restore "Store"/"Restore"). Codes the monitor reports but MCCS
+  does not define (manufacturer-specific) are **not** shown in Controls.
+- **Log system**: `logRecords[]` array (max 500), `addLogEntry(dir, op, detail, sendHex, recvHex)`, `renderLogEntries()` renders log with TX/RX hex rows. VCP names come from the MCCS table (`vcpCodeName()`). Per-segment capabilities logging with `<read failed>` fallback
 - **Raw command tab**: hex input with real-time TX packet preview (`computeTxHex()` auto-calculates `0x80|len` + CHK), quick command presets (`01 10`, `F3 00 00` etc.), response display with TX/RX/parsed info
 - **Tab switching**: Controls | Log | Raw
 - **Bridge**: `window.__bridgeReceive(data)` called by C++ via ExecuteScript, dispatches to `dispatchResponse()`
+
+#### mccs.js
+`window.MCCS = { groups: [...], vcp: {...} }`. The `groups` array orders the 8 MCCS
+functional categories (Preset / Image / Color / Display / Geometry / Misc / Audio / DPVL).
+Each `vcp[code]` has `{ name, group, access:'rw'|'ro'|'wo', type:'C'|'NC'|'T', values?, action? }`.
+`values` maps value → label for enumerable NC codes (e.g. Input Source 0x60, Color Preset
+0x14, Power Mode 0xD6, OSD Language 0xCC). `action:true` marks WO trigger codes
+(restore-defaults family, degauss). Generated from `SPEC/MCCS 2.2a.pdf` Section 8 tables.
 
 #### style.css
 Dark theme using CSS variables. Key colors: `--bg-primary: #1e1e2e`, `--accent: #5b8df0`, `--sidebar-width: 220px`. Scrollbar styling, slider thumb styling, monospace log entries.
@@ -215,7 +234,7 @@ The post-build step copies `web/` to the output directory (`bin/x64/Debug/web/`)
 
 | Tab | Purpose |
 |-----|---------|
-| **Controls** | VCP sliders for supported features + collapsible capabilities string viewer |
+| **Controls** | MCCS-driven controls for every supported VCP code, grouped by functional category (slider / dropdown / read-only / action button by type) + collapsible capabilities string viewer |
 | **Log** | DDC/CI read/write log with timestamps, direction arrows (→ send, ← recv), VCP code names, TX/RX hex rows. Clear button. 500-entry cap. |
 | **Raw** | Hex body input with real-time TX preview (auto checksum), Send button, response display, quick command presets (11 presets) |
 
@@ -229,7 +248,12 @@ The post-build step copies `web/` to the output directory (`bin/x64/Debug/web/`)
 
 3. **在线检查更新** — 未实现版本更新检测机制。需要：版本号定义、更新服务器 API、下载替换流程、UI 提示。WebView2 已内嵌 Chromium，可直接用 JS `fetch()` 请求更新接口
 
-4. **完善 MCCS 所有指令功能解析读写** — 当前仅覆盖常用 VCP 码（0x10/0x12/0x14/0x16/0x18/0x1A/0x60），MCCS 规范包含 ~200 个 VCP 码以及非 VCP 指令（Timing Report、Save/Restore Settings 等），需补充完整的指令集定义和解析
+4. **~~完善 MCCS 所有指令功能解析读写~~（已完成）** — Controls 页面已改为基于 capabilities
+   字符串 + MCCS 2.2a 标准解析渲染：`web/mccs.js` 定义全部 152 个 VCP 码（按 8 大功能分组，
+   含类型 C/NC/T、读写属性、NC 枚举值表）；`app.js` 的 `parseCapsVCP()` 解析 `vcp(...)`（含子值），
+   仅渲染显示器上报且 MCCS 已定义的码，按类型生成滑块 / 下拉 / 只读 / 动作按钮。厂商私有码
+   （无 MCCS 定义）不在 Controls 中显示。表（T）类与 LUT/Timing 等结构化指令目前仅做只读展示，
+   尚未实现写入编排（可在高级页面中扩展，见第 5 项）。
 
 5. **添加高级/客制化指令页面** — 设计一个高级页面用于自定义 DDC/CI 指令序列：支持多步指令编排、条件执行、延时控制、重复发送等，方便客制化调试和工厂测试场景
 
