@@ -41,6 +41,7 @@
     var tabRaw = document.getElementById('tab-raw');
     var logEntriesEl = document.getElementById('log-entries');
     var btnClearLogEl = document.getElementById('btn-clear-log');
+    var scanOverlayEl = document.getElementById('scan-overlay');
 
     // ---- Log ----
 
@@ -160,6 +161,9 @@
         case 'monitorList':
             monitors = data.monitors || [];
             renderMonitorList();
+            // Keep the scan animation up briefly so it reads as a real scan
+            // rather than a flicker on machines that enumerate instantly.
+            setTimeout(hideScanOverlay, 450);
             if (activeMonitorIndex >= monitors.length) {
                 selectMonitor(-1);
             } else if (activeMonitorIndex >= 0) {
@@ -625,8 +629,23 @@
 
     // ---- Monitor list ----
 
+    function showScanOverlay() {
+        if (!scanOverlayEl) return;
+        scanOverlayEl.classList.remove('hidden');
+        // Safety net: never let the overlay stick if no response arrives.
+        clearTimeout(showScanOverlay._timer);
+        showScanOverlay._timer = setTimeout(hideScanOverlay, 8000);
+    }
+
+    function hideScanOverlay() {
+        if (!scanOverlayEl) return;
+        clearTimeout(showScanOverlay._timer);
+        scanOverlayEl.classList.add('hidden');
+    }
+
     function refreshMonitors() {
         activeMonitorIndex = -1;
+        showScanOverlay();
         sendToHost('enumerateMonitors');
         setStatus('Scanning monitors...');
     }

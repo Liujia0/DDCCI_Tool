@@ -398,6 +398,10 @@ std::wstring WebViewBridge::HandleRequest(const std::wstring& json) {
     std::wstring method = ExtractJsonString(json, L"method");
 
     if (method == L"enumerateMonitors") {
+        // Re-scan physical monitors so hot-plug/unplug is reflected. Without
+        // this, BuildMonitorList() would only return the cached list captured
+        // at startup and the Refresh button would appear to do nothing.
+        m_monitorMgr->EnumerateMonitors();
         return BuildMonitorList();
     }
 
