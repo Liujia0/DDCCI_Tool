@@ -5,29 +5,98 @@
 }
 
 :root {
-    --bg-primary: #1e1e2e;
-    --bg-secondary: #282840;
-    --bg-surface: #313150;
-    --bg-hover: #3b3b60;
-    --text-primary: #e0e0f0;
-    --text-secondary: #a0a0c0;
-    --text-muted: #707090;
-    --accent: #5b8df0;
-    --accent-hover: #7aa5f5;
-    --accent-bg: rgba(91, 141, 240, 0.12);
-    --border: #404060;
-    --danger: #e05570;
+    /* ===== Apple-like glassmorphism palette (default / "glass") ===== */
+    --bg-base: #1a1d24;
+    --bg-gradient-1: #2b3a5c;
+    --bg-gradient-2: #4a2d5c;
+    --bg-gradient-3: #1e3a4a;
+
+    --glass-bg: rgba(255, 255, 255, 0.06);
+    --glass-bg-strong: rgba(255, 255, 255, 0.10);
+    --glass-bg-hover: rgba(255, 255, 255, 0.14);
+    --glass-border: rgba(255, 255, 255, 0.12);
+    --glass-border-strong: rgba(255, 255, 255, 0.22);
+    --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.28);
+    --glass-shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.45);
+    --glass-inset: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+
+    --text-primary: rgba(255, 255, 255, 0.96);
+    --text-secondary: rgba(255, 255, 255, 0.70);
+    --text-dim: rgba(255, 255, 255, 0.42);
+
+    --accent: #0a84ff;
+    --accent-hover: #409cff;
+    --accent-soft: rgba(10, 132, 255, 0.25);
+
+    --success: #30d158;
+    --warning: #ff9f0a;
+    --danger: #ff453a;
+
+    --blur: saturate(180%) blur(24px);
+    --blur-strong: saturate(200%) blur(40px);
+
+    /* ===== Legacy aliases — map old component vars onto the glass system.
+       Because these reference the glass vars, a theme that overrides a glass
+       var automatically updates every component that used the old name. ===== */
+    --bg-primary: var(--bg-base);
+    --bg-secondary: var(--glass-bg);
+    --bg-surface: var(--glass-bg-strong);
+    --bg-hover: var(--glass-bg-hover);
+    --text-muted: var(--text-dim);
+    --accent-bg: var(--accent-soft);
+    --border: var(--glass-border);
+
     --radius: 8px;
-    --sidebar-width: 220px;
+    --sidebar-width: 240px;
 }
 
 body {
-    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-    background: var(--bg-primary);
+    font-family: -apple-system, 'SF Pro Display', 'SF Pro Text', BlinkMacSystemFont, 'Segoe UI', 'Inter', system-ui, sans-serif;
     color: var(--text-primary);
     height: 100vh;
     overflow: hidden;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    letter-spacing: -0.01em;
+    background: var(--bg-base);
+    position: relative;
+}
+
+/* Animated wallpaper-like gradient backdrop */
+body::before {
+    content: '';
+    position: fixed;
+    inset: -20%;
+    z-index: -2;
+    background:
+        radial-gradient(circle at 15% 20%, var(--bg-gradient-1) 0%, transparent 45%),
+        radial-gradient(circle at 85% 15%, var(--bg-gradient-2) 0%, transparent 50%),
+        radial-gradient(circle at 50% 90%, var(--bg-gradient-3) 0%, transparent 55%),
+        radial-gradient(circle at 95% 80%, #5c2d4a 0%, transparent 40%);
+    filter: blur(60px);
+    animation: bgFloat 24s ease-in-out infinite alternate;
+}
+
+body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    background: rgba(20, 22, 28, 0.35);
+    backdrop-filter: blur(40px);
+    -webkit-backdrop-filter: blur(40px);
+    pointer-events: none;
+}
+
+@keyframes bgFloat {
+    0%   { transform: translate(0, 0) scale(1); }
+    50%  { transform: translate(2%, -2%) scale(1.05); }
+    100% { transform: translate(-2%, 2%) scale(1); }
+}
+
+::selection {
+    background: var(--accent-soft);
+    color: #fff;
 }
 
 #app {
@@ -40,8 +109,13 @@ body {
 #sidebar {
     width: var(--sidebar-width);
     min-width: var(--sidebar-width);
-    background: var(--bg-secondary);
-    border-right: 1px solid var(--border);
+    margin: 12px 0 12px 12px;
+    background: var(--glass-bg);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+    border: 1px solid var(--glass-border);
+    border-radius: 18px;
+    box-shadow: var(--glass-shadow), var(--glass-inset);
     display: flex;
     flex-direction: column;
     user-select: none;
@@ -144,15 +218,75 @@ body {
     color: var(--text-muted);
 }
 
+/* ---- Theme picker ---- */
+
+.theme-picker {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+}
+
+.theme-picker label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+}
+
+#theme-select {
+    flex: 1;
+    min-width: 0;
+    background: var(--glass-bg);
+    color: var(--text-primary);
+    border: 1px solid var(--glass-border);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-family: inherit;
+    outline: none;
+    cursor: pointer;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+#theme-select:hover {
+    background: var(--glass-bg-strong);
+    border-color: var(--glass-border-strong);
+}
+
+#theme-select:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Native <option> can't render glass — give it a solid readable bg per theme */
+#theme-select option { background: #2a2f3a; color: #f0f0f2; }
+[data-theme="light"]    #theme-select option { background: #ffffff; color: #1d1d1f; }
+[data-theme="graphite"] #theme-select option { background: #20242c; color: #e8e6e1; }
+[data-theme="cyber"]    #theme-select option { background: #141a2e; color: #e0e6f0; }
+[data-theme="nord"]     #theme-select option { background: #3b4252; color: #eceff4; }
+
 /* ---- Main Panel ---- */
 
 #main-panel {
     flex: 1;
+    margin: 12px;
     display: flex;
     align-items: center;
     justify-content: center;
     overflow: hidden;
     position: relative;
+    background: var(--glass-bg);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+    border: 1px solid var(--glass-border);
+    border-radius: 18px;
+    box-shadow: var(--glass-shadow), var(--glass-inset);
 }
 
 .panel-state {
@@ -781,10 +915,12 @@ body {
     align-items: center;
     gap: 6px;
     padding: 32px 40px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+    background: rgba(40, 42, 52, 0.55);
+    backdrop-filter: var(--blur-strong);
+    -webkit-backdrop-filter: var(--blur-strong);
+    border: 1px solid var(--glass-border-strong);
+    border-radius: 18px;
+    box-shadow: var(--glass-shadow-lg), var(--glass-inset);
     animation: scan-pop 0.25s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
 
@@ -867,3 +1003,136 @@ body {
     font-size: 12.5px;
     color: var(--text-secondary);
 }
+
+/* ============================================================
+   THEME OVERRIDES
+   Default (no data-theme / "glass") = Apple glassmorphism above.
+   Each theme only redefines the glass vars; the legacy aliases
+   (--bg-secondary, --bg-surface, --border, ...) defined in :root
+   reference them, so every component updates automatically.
+   ============================================================ */
+
+/* ===== Theme: Graphite Gold ===== */
+[data-theme="graphite"] {
+    --bg-base: #15171c;
+    --bg-gradient-1: transparent;
+    --bg-gradient-2: transparent;
+    --bg-gradient-3: transparent;
+    --glass-bg: rgba(32, 36, 44, 0.85);
+    --glass-bg-strong: rgba(42, 47, 58, 0.9);
+    --glass-bg-hover: rgba(50, 56, 68, 0.95);
+    --glass-border: rgba(255, 255, 255, 0.06);
+    --glass-border-strong: rgba(201, 168, 106, 0.35);
+    --glass-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --glass-shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.6);
+    --glass-inset: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    --text-primary: #e8e6e1;
+    --text-secondary: #a8a59d;
+    --text-dim: #6b6862;
+    --accent: #c9a86a;
+    --accent-hover: #d8ba80;
+    --accent-soft: rgba(201, 168, 106, 0.25);
+    --success: #7fb582;
+    --warning: #d4a25a;
+    --danger: #c97064;
+    --blur: none;
+    --blur-strong: none;
+}
+[data-theme="graphite"] body::before {
+    background: linear-gradient(180deg, #1d2027 0%, #15171c 100%);
+    filter: none;
+    animation: none;
+}
+[data-theme="graphite"] .scan-dialog { background: rgba(32, 36, 44, 0.96); }
+
+/* ===== Theme: Cyber Neon ===== */
+[data-theme="cyber"] {
+    --bg-base: #0a0e1a;
+    --bg-gradient-1: #3878ff;
+    --bg-gradient-2: #00d4ff;
+    --bg-gradient-3: #6020a0;
+    --glass-bg: rgba(20, 26, 46, 0.7);
+    --glass-bg-strong: rgba(26, 34, 64, 0.8);
+    --glass-bg-hover: rgba(30, 40, 72, 0.9);
+    --glass-border: rgba(56, 120, 255, 0.25);
+    --glass-border-strong: rgba(0, 212, 255, 0.5);
+    --glass-shadow: 0 0 20px rgba(56, 120, 255, 0.2);
+    --glass-shadow-lg: 0 0 40px rgba(56, 120, 255, 0.4);
+    --glass-inset: inset 0 1px 0 rgba(0, 212, 255, 0.15);
+    --text-primary: #e0e6f0;
+    --text-secondary: #8892b0;
+    --text-dim: #4a5478;
+    --accent: #00d4ff;
+    --accent-hover: #5be0ff;
+    --accent-soft: rgba(0, 212, 255, 0.28);
+    --success: #00e68a;
+    --warning: #ffaa30;
+    --danger: #ff4466;
+}
+[data-theme="cyber"] #welcome h1 {
+    background: linear-gradient(135deg, #3878ff 0%, #00d4ff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+[data-theme="cyber"] .scan-dialog { background: rgba(20, 26, 46, 0.92); }
+
+/* ===== Theme: Nord Frost ===== */
+[data-theme="nord"] {
+    --bg-base: #2e3440;
+    --bg-gradient-1: #3b4252;
+    --bg-gradient-2: #434c5e;
+    --bg-gradient-3: #4c566a;
+    --glass-bg: rgba(59, 66, 82, 0.75);
+    --glass-bg-strong: rgba(67, 76, 94, 0.85);
+    --glass-bg-hover: rgba(76, 86, 106, 0.9);
+    --glass-border: rgba(216, 222, 233, 0.1);
+    --glass-border-strong: rgba(136, 192, 208, 0.4);
+    --glass-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    --glass-shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.4);
+    --glass-inset: inset 0 1px 0 rgba(236, 239, 244, 0.06);
+    --text-primary: #eceff4;
+    --text-secondary: #d8dee9;
+    --text-dim: #81a1c1;
+    --accent: #88c0d0;
+    --accent-hover: #8fbcbb;
+    --accent-soft: rgba(136, 192, 208, 0.28);
+    --success: #a3be8c;
+    --warning: #ebcb8b;
+    --danger: #bf616a;
+    --blur: saturate(150%) blur(16px);
+}
+[data-theme="nord"] .scan-dialog { background: rgba(59, 66, 82, 0.96); }
+
+/* ===== Theme: Light Mode ===== */
+[data-theme="light"] {
+    --bg-base: #f5f5f7;
+    --bg-gradient-1: #e0eaff;
+    --bg-gradient-2: #ffe8f0;
+    --bg-gradient-3: #e0f5ff;
+    --glass-bg: rgba(255, 255, 255, 0.65);
+    --glass-bg-strong: rgba(255, 255, 255, 0.8);
+    --glass-bg-hover: rgba(255, 255, 255, 0.9);
+    --glass-border: rgba(0, 0, 0, 0.08);
+    --glass-border-strong: rgba(0, 0, 0, 0.14);
+    --glass-shadow: 0 6px 24px rgba(0, 0, 0, 0.08);
+    --glass-shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.15);
+    --glass-inset: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+    --text-primary: #1d1d1f;
+    --text-secondary: #515154;
+    --text-dim: #86868b;
+    --accent: #0071e3;
+    --accent-hover: #2389eb;
+    --accent-soft: rgba(0, 113, 227, 0.18);
+    --success: #248a3d;
+    --warning: #b25000;
+    --danger: #d70015;
+}
+[data-theme="light"] body::after { background: rgba(245, 245, 247, 0.5); }
+[data-theme="light"] .scan-dialog { background: rgba(255, 255, 255, 0.9); }
+[data-theme="light"] .scan-overlay { background: rgba(120, 120, 140, 0.35); }
+[data-theme="light"] ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.18); }
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.32); }
+/* Raw inputs use --bg-primary (opaque base) — keep text readable in light mode */
+[data-theme="light"] .raw-hex-input,
+[data-theme="light"] .raw-code { color: var(--accent); }

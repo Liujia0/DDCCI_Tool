@@ -749,6 +749,28 @@
         logEntriesEl.innerHTML = '';
     });
 
+    // ---- Theme ----
+
+    function applyTheme(name) {
+        if (!name || name === 'glass') {
+            document.documentElement.removeAttribute('data-theme');
+        } else {
+            document.documentElement.setAttribute('data-theme', name);
+        }
+        try { localStorage.setItem('ddcci.theme', name); } catch (e) {}
+    }
+
+    (function initTheme() {
+        var saved = 'graphite';
+        try { saved = localStorage.getItem('ddcci.theme') || 'graphite'; } catch (e) {}
+        var sel = document.getElementById('theme-select');
+        if (sel) {
+            sel.value = saved;
+            sel.addEventListener('change', function () { applyTheme(this.value); });
+        }
+        applyTheme(saved);
+    })();
+
     // ---- Init ----
 
     var _bridgeReady = false;
