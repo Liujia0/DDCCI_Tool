@@ -14,6 +14,7 @@ struct MonitorInfo {
 struct VCPFeature {
     uint32_t current;
     uint32_t max;
+    bool valid;
 };
 
 class MonitorManager {
@@ -31,6 +32,7 @@ public:
     std::wstring GetCapabilities(int index);
     DWORD GetCapabilitiesStringLen(int index);
     std::vector<uint8_t> GetSupportedVCPCodes(int index);
+    static std::vector<uint8_t> ParseSupportedVCPCodes(const std::wstring& caps);
     VCPFeature GetVCPFeature(int index, uint8_t vcpCode);
     void SetVCP(int index, uint8_t vcpCode, uint32_t value);
 

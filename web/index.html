@@ -4,13 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DDCCI Monitor Tool</title>
+    <link rel="icon" href="logo.svg" type="image/svg+xml">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div id="app">
         <aside id="sidebar">
             <div class="sidebar-header">
-                <h2>Monitors</h2>
+                <div class="brand">
+                    <img class="brand-logo" src="logo.svg" alt="">
+                    <h2>Monitors</h2>
+                </div>
                 <button id="btn-refresh" title="Refresh monitor list">&#x21bb;</button>
             </div>
             <ul id="monitor-list">
@@ -23,7 +27,7 @@
 
         <main id="main-panel">
             <div id="welcome" class="panel-state visible">
-                <div class="welcome-icon">&#x1f5b5;</div>
+                <div class="welcome-icon"><img src="logo.svg" alt="DDCCI Monitor Tool"></div>
                 <h1>DDCCI Monitor Tool</h1>
                 <p>Select a monitor from the sidebar to view and adjust settings.</p>
             </div>

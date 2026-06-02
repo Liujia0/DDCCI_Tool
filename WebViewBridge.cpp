@@ -7,7 +7,19 @@
 
 namespace {
 
+    std::string WideToUtf8(const std::wstring& w) {
+        if (w.empty()) return std::string();
+        int len = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()),
+                                      nullptr, 0, nullptr, nullptr);
+        if (len <= 0) return std::string();
+        std::string out(len, '\0');
+        WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()),
+                            &out[0], len, nullptr, nullptr);
+        return out;
+    }
+
     void BridgeLog(const WCHAR* fmt, ...) {
+#ifdef _DEBUG
         WCHAR path[MAX_PATH];
         GetModuleFileNameW(nullptr, path, MAX_PATH);
         std::wstring logPath(path);
@@ -25,12 +37,15 @@ namespace {
         HANDLE hFile = CreateFileW(logPath.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ,
                                    nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (hFile != INVALID_HANDLE_VALUE) {
-            std::string line(buf, buf + wcslen(buf));
+            std::string line = WideToUtf8(buf);
             line += "\r\n";
             DWORD written = 0;
             WriteFile(hFile, line.c_str(), static_cast<DWORD>(line.size()), &written, nullptr);
             CloseHandle(hFile);
         }
+#else
+        (void)fmt;
+#endif
     }
 
     // ---- DDC/CI packet hex computation ----
@@ -94,21 +109,6 @@ namespace {
         return BuildCapsSendHex(0);
     }
 
-    std::wstring BuildCapsRecvHex(const std::string& capsStr) {
-        // Full caps in one packet (used for raw command tab display).
-        // Packet payload: [RESULT=0x00] [OFF_HI] [OFF_LO] [caps_bytes...]
-        std::vector<uint8_t> p = {0x6E, 0x51};
-        uint32_t dataLen = 3 + static_cast<uint32_t>(capsStr.length());
-        p.push_back(static_cast<uint8_t>(0x80 | (dataLen & 0x7F)));
-        p.push_back(0x00); // result: success
-        p.push_back(0x00); // offset HI
-        p.push_back(0x00); // offset LO
-        for (char ch : capsStr)
-            p.push_back(static_cast<uint8_t>(ch));
-        p.push_back(ChkXor(p));
-        return PacketHex(p);
-    }
-
     // Build per-segment recv hex for segmented capabilities log.
     // offset = our request offset, nextOffset = offset + chunk.size(), chunk = data bytes
     static const size_t CAPS_CHUNK_SIZE = 26; // max data bytes per I2C segment
@@ -124,6 +124,25 @@ namespace {
             p.push_back(static_cast<uint8_t>(ch));
         p.push_back(ChkXor(p));
         return PacketHex(p);
+    }
+
+    // Full capabilities read as it actually goes over the wire: one I2C reply
+    // packet per CAPS_CHUNK_SIZE chunk (a single DDC packet's length field is
+    // 7-bit, so the whole string never fits in one packet). Segments are joined
+    // by "  " for display.
+    std::wstring BuildCapsRecvHex(const std::string& capsStr) {
+        if (capsStr.empty()) return L"";
+        std::wstring out;
+        size_t offset = 0;
+        while (offset < capsStr.size()) {
+            size_t chunkSize = (std::min)(CAPS_CHUNK_SIZE, capsStr.size() - offset);
+            std::string chunk = capsStr.substr(offset, chunkSize);
+            uint16_t nextOffset = static_cast<uint16_t>(offset + chunkSize);
+            if (!out.empty()) out += L"  ";
+            out += BuildCapsSegRecvHex(static_cast<uint16_t>(offset), nextOffset, chunk);
+            offset += chunkSize;
+        }
+        return out;
     }
 
     std::wstring BuildCapsSegmentsJson(const std::string& capsStr, size_t totalLen) {
@@ -273,7 +292,11 @@ HRESULT WebViewBridge::OnControllerCreated(HRESULT result, ICoreWebView2Controll
     m_webview->get_Settings(&settings);
     if (settings) {
         settings->put_AreDefaultScriptDialogsEnabled(FALSE);
+#ifdef _DEBUG
         settings->put_AreDevToolsEnabled(TRUE);
+#else
+        settings->put_AreDevToolsEnabled(FALSE);
+#endif
     }
 
     // Register WebMessageReceived handler
@@ -449,8 +472,8 @@ std::wstring WebViewBridge::BuildMonitorList() {
 
 std::wstring WebViewBridge::BuildGetCapabilitiesResponse(int monitorIndex) {
     auto caps = m_monitorMgr->GetCapabilities(monitorIndex);
-    std::string capsStr(caps.begin(), caps.end());
-    auto vcpCodes = m_monitorMgr->GetSupportedVCPCodes(monitorIndex);
+    std::string capsStr = WideToUtf8(caps);
+    auto vcpCodes = MonitorManager::ParseSupportedVCPCodes(caps);
 
     // Even when CapabilitiesRequestAndCapabilitiesReply fails (capsStr empty),
     // estimate segment count from the expected length so that multi-segment
@@ -488,6 +511,7 @@ std::wstring WebViewBridge::BuildGetVCPResponse(int monitorIndex, uint8_t vcpCod
        << L",\"vcpCode\":" << static_cast<int>(vcpCode)
        << L",\"current\":" << feature.current
        << L",\"max\":" << feature.max
+       << L",\"valid\":" << (feature.valid ? L"true" : L"false")
        << L",\"sendHex\":\"" << BuildVCPGetSendHex(vcpCode) << L"\""
        << L",\"recvHex\":\"" << BuildVCPGetRecvHex(vcpCode, feature.current, feature.max) << L"\""
        << L"}";
@@ -595,7 +619,7 @@ std::wstring WebViewBridge::BuildRawCommandResponse(int monitorIndex, const std:
     } else if (body.size() >= 3 && body[0] == 0xF3) {
         // Capabilities request (offset in bytes 1-3)
         auto caps = m_monitorMgr->GetCapabilities(monitorIndex);
-        std::string capsStr(caps.begin(), caps.end());
+        std::string capsStr = WideToUtf8(caps);
         rxHex = BuildCapsRecvHex(capsStr);
 
         parseInfo = L"Capabilities: ";

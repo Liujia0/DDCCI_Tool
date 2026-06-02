@@ -98,6 +98,7 @@ BOOL CALLBACK MonitorEnumProc(HMONITOR hMonitor, HDC, LPRECT, LPARAM dwData) {
 }
 
 static void WriteLog(const std::wstring& msg) {
+#ifdef _DEBUG
     WCHAR path[MAX_PATH];
     GetModuleFileNameW(nullptr, path, MAX_PATH);
     std::wstring logPath(path);
@@ -115,6 +116,9 @@ static void WriteLog(const std::wstring& msg) {
         WriteFile(hFile, line.c_str(), static_cast<DWORD>(line.size()), &written, nullptr);
         CloseHandle(hFile);
     }
+#else
+    (void)msg;
+#endif
 }
 
 static void WriteLog(const WCHAR* fmt, ...) {
@@ -200,8 +204,11 @@ DWORD MonitorManager::GetCapabilitiesStringLen(int index) {
 }
 
 std::vector<uint8_t> MonitorManager::GetSupportedVCPCodes(int index) {
+    return ParseSupportedVCPCodes(GetCapabilities(index));
+}
+
+std::vector<uint8_t> MonitorManager::ParseSupportedVCPCodes(const std::wstring& caps) {
     std::vector<uint8_t> codes;
-    std::wstring caps = GetCapabilities(index);
     if (caps.empty()) return codes;
 
     // Find "vcp(" in the capabilities string
@@ -242,7 +249,7 @@ std::vector<uint8_t> MonitorManager::GetSupportedVCPCodes(int index) {
 
 VCPFeature MonitorManager::GetVCPFeature(int index, uint8_t vcpCode) {
     auto* mon = GetMonitor(index);
-    VCPFeature result = {0, 0};
+    VCPFeature result = {0, 0, false};
     if (!mon) return result;
 
     DWORD current = 0, max = 0;
@@ -251,6 +258,7 @@ VCPFeature MonitorManager::GetVCPFeature(int index, uint8_t vcpCode) {
 
     result.current = current;
     result.max = max;
+    result.valid = true;
     return result;
 }
 

@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="DDCCI Monitor Tool logo">
+  <defs>
+    <linearGradient id="badge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a2a40"/>
+      <stop offset="1" stop-color="#1c1c2a"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1a1a28"/>
+      <stop offset="1" stop-color="#11111b"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7aa5f5"/>
+      <stop offset="1" stop-color="#5b8df0"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffe6a0"/>
+      <stop offset="1" stop-color="#ffc85b"/>
+    </radialGradient>
+  </defs>
+
+  <!-- badge -->
+  <rect x="12" y="12" width="232" height="232" rx="52" fill="url(#badge)" stroke="#3a3a55" stroke-width="2"/>
+
+  <!-- monitor stand -->
+  <rect x="118" y="166" width="20" height="22" rx="4" fill="url(#accent)"/>
+  <rect x="84" y="186" width="88" height="16" rx="8" fill="url(#accent)"/>
+
+  <!-- screen body -->
+  <rect x="50" y="56" width="156" height="112" rx="18" fill="url(#accent)"/>
+  <rect x="62" y="68" width="132" height="88" rx="10" fill="url(#screen)"/>
+
+  <!-- brightness sun (monitor control motif) -->
+  <g stroke="url(#sun)" stroke-width="7" stroke-linecap="round">
+    <line x1="128" y1="80" x2="128" y2="90"/>
+    <line x1="128" y1="134" x2="128" y2="144"/>
+    <line x1="100" y1="112" x2="90" y2="112"/>
+    <line x1="166" y1="112" x2="156" y2="112"/>
+    <line x1="108.4" y1="92.4" x2="101.3" y2="85.3"/>
+    <line x1="154.7" y1="138.7" x2="147.6" y2="131.6"/>
+    <line x1="147.6" y1="92.4" x2="154.7" y2="85.3"/>
+    <line x1="101.3" y1="138.7" x2="108.4" y2="131.6"/>
+  </g>
+  <circle cx="128" cy="112" r="17" fill="url(#sun)"/>
+</svg>

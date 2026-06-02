@@ -21,6 +21,9 @@ DDCCI_Tool/
 ├── packages.config             # NuGet: Microsoft.Web.WebView2 1.0.2903.40
 ├── resource.h                  # RC resource IDs
 ├── DDCCI_Tool.rc               # Executable metadata (icon, version)
+├── app.ico                     # App icon (6 sizes 16–256, PNG-in-ICO)
+├── tools/
+│   └── make_icon.py            # Regenerates app.ico from the logo design
 ├── main.cpp                    # WinMain entry point, window class, message loop     (98 lines)
 ├── MonitorManager.h            # Monitor info structs, manager class declaration     (46 lines)
 ├── MonitorManager.cpp          # DDC/CI API wrapper (dxva2)                          (272 lines)
@@ -29,6 +32,7 @@ DDCCI_Tool/
 └── web/
     ├── index.html              # Main page: sidebar + tabs (Controls/Log/Raw)        (95 lines)
     ├── style.css               # Dark theme CSS                                      (665 lines)
+    ├── logo.svg                # App logo (monitor + brightness motif, accent blue)
     └── app.js                  # Frontend logic, bridge, logging                     (595 lines)
 ```
 
@@ -89,12 +93,12 @@ Wraps Windows DDC/CI API (`dxva2.lib`, `physicalmonitorenumerationapi.h`, `lowle
 | `GetCapabilities(i)` | Calls `GetCapabilitiesStringLength` + `CapabilitiesRequestAndCapabilitiesReply`, returns wide-string capabilities |
 | `GetCapabilitiesStringLen(i)` | Just queries expected length (used for segment estimation when read fails) |
 | `GetSupportedVCPCodes(i)` | Parses `vcp(10 12 16 ...)` from capabilities string, returns list of supported VCP codes |
-| `GetVCPFeature(i, vcpCode)` | Calls `GetVCPFeatureAndVCPFeatureReply`, returns `{current, max}` |
+| `GetVCPFeature(i, vcpCode)` | Calls `GetVCPFeatureAndVCPFeatureReply`, returns `{current, max, valid}` (`valid=false` on read failure) |
 | `SetVCP(i, vcpCode, value)` | Calls `SetVCPFeature` |
 
 **Monitor naming**: `szPhysicalMonitorDescription` always returns "Generic PnP Monitor". The only reliable way to get real model names is extracting `model(CU34P2C)` from the DDC/CI capabilities string — this is done during enumeration in `MonitorEnumProc`.
 
-**Diagnostic logging**: Writes to `debug.log` in the EXE directory. Captures enumeration progress, physical monitor counts, capabilities read results, and error codes.
+**Diagnostic logging**: In `_DEBUG` builds only, writes to `debug.log` in the EXE directory (compiled out of Release). Captures enumeration progress, physical monitor counts, capabilities read results, and error codes.
 
 ### WebViewBridge (WebViewBridge.h/.cpp)
 
@@ -123,11 +127,11 @@ WebView2 host + JSON bridge + DDC/CI packet hex computation.
 
 Standard Win32 entry point:
 1. `WinMain` → registers window class (dark background brush `#1e1e2e`)
-2. Creates window at ~1100×750
+2. Creates window at 960×680
 3. Instantiates `MonitorManager` + `WebViewBridge`
 4. `WM_CREATE` → `bridge.Initialize(hwnd)`
 5. `WM_SIZE` → `bridge.Resize()`
-6. `WM_CLOSE` → `bridge.Close()`, `PostQuitMessage`
+6. `WM_DESTROY` → `bridge.Close()`, `PostQuitMessage`
 
 ### web/ (Frontend)
 
@@ -219,7 +223,7 @@ The post-build step copies `web/` to the output directory (`bin/x64/Debug/web/`)
 
 ## TODO / Pending Tasks
 
-1. **Release 前移除 debug.log** — `MonitorManager.cpp` 和 `WebViewBridge.cpp` 中 `WriteLog`/`BridgeLog` 会持续写入 `debug.log` 文件，正式发布时需移除或改为条件编译（如 `#ifdef _DEBUG`）
+1. **~~Release 前移除 debug.log~~（已完成）** — `MonitorManager.cpp` 和 `WebViewBridge.cpp` 中 `WriteLog`/`BridgeLog` 已用 `#ifdef _DEBUG` 包裹，Release 构建不再写入 `debug.log`。DevTools 同样仅在 Debug 启用。
 
 2. **单文件打包发布** — 当前输出依赖 `web/` 文件夹和 `WebView2Loader.dll`。需将 `web/` 资源嵌入 EXE（通过 RC 资源或嵌入字节数组），`WebView2Loader.dll` 需静态链接或一并打包为单文件
 

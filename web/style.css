@@ -63,6 +63,18 @@ body {
     color: var(--text-secondary);
 }
 
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.brand-logo {
+    width: 24px;
+    height: 24px;
+    display: block;
+}
+
 #btn-refresh {
     background: none;
     border: 1px solid var(--border);
@@ -165,8 +177,14 @@ body {
 
 .welcome-icon {
     font-size: 64px;
-    opacity: 0.4;
     margin-bottom: 8px;
+}
+
+.welcome-icon img {
+    width: 96px;
+    height: 96px;
+    display: block;
+    opacity: 0.9;
 }
 
 #welcome h1 {

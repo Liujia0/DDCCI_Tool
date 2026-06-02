@@ -5,6 +5,7 @@
 #include <Windows.h>
 #include "MonitorManager.h"
 #include "WebViewBridge.h"
+#include "resource.h"
 
 static const wchar_t* WINDOW_CLASS = L"DDCCI_Tool_Window";
 static const wchar_t* WINDOW_TITLE = L"DDCCI Monitor Tool";
@@ -65,6 +66,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
     wc.style         = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc   = WndProc;
     wc.hInstance     = hInstance;
+    wc.hIcon         = LoadIconW(hInstance, MAKEINTRESOURCEW(IDI_APP_ICON));
+    wc.hIconSm       = LoadIconW(hInstance, MAKEINTRESOURCEW(IDI_APP_ICON));
     wc.hCursor       = LoadCursorW(nullptr, IDC_ARROW);
     wc.hbrBackground = CreateSolidBrush(RGB(0x1E, 0x1E, 0x2E));
     wc.lpszClassName = WINDOW_CLASS;

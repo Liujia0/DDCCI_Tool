@@ -364,3 +364,6 @@ FodyWeavers.xsd
 
 # Claude Code local settings
 .claude/
+
+# VS Code local settings
+.vscode/

@@ -132,8 +132,13 @@
         if (data.type === 'monitorList') {
             detail = (data.monitors ? data.monitors.length : 0) + ' monitor(s)';
         } else if (data.type === 'vcpFeature') {
-            detail = vcpCodeName(data.vcpCode) + ' (0x' + data.vcpCode.toString(16).toUpperCase() + ')'
-                   + ' = ' + data.current + '/' + data.max;
+            if (data.valid === false) {
+                detail = vcpCodeName(data.vcpCode) + ' (0x' + data.vcpCode.toString(16).toUpperCase() + ')'
+                       + ' = <read failed>';
+            } else {
+                detail = vcpCodeName(data.vcpCode) + ' (0x' + data.vcpCode.toString(16).toUpperCase() + ')'
+                       + ' = ' + data.current + '/' + data.max;
+            }
         } else if (data.type === 'vcpSet') {
             detail = vcpCodeName(data.vcpCode) + ' (0x' + data.vcpCode.toString(16).toUpperCase() + ')'
                    + ' = ' + data.value;
@@ -186,7 +191,7 @@
             break;
 
         case 'vcpFeature':
-            updateVCPUI(data.vcpCode, data.current, data.max);
+            updateVCPUI(data.vcpCode, data.current, data.max, data.valid !== false);
             break;
 
         case 'vcpSet':
@@ -510,22 +515,34 @@
         }
     }
 
-    function updateVCPUI(vcpCode, current, max) {
+    function updateVCPUI(vcpCode, current, max, valid) {
         // Update slider
         var slider = document.querySelector('.vcp-slider[data-vcp-code="' + vcpCode + '"]');
         if (slider) {
-            slider.max = max;
-            slider.value = current;
-            var valSpan = document.getElementById('val-' + vcpCode);
-            if (valSpan) {
-                valSpan.textContent = current;
+            if (valid === false) {
+                slider.disabled = true;
+                var failSpan = document.getElementById('val-' + vcpCode);
+                if (failSpan) failSpan.textContent = 'err';
+            } else {
+                slider.disabled = false;
+                slider.max = max;
+                slider.value = current;
+                var valSpan = document.getElementById('val-' + vcpCode);
+                if (valSpan) {
+                    valSpan.textContent = current;
+                }
             }
         }
 
         // Update select
         var select = document.querySelector('.vcp-select[data-vcp-code="' + vcpCode + '"]');
         if (select) {
-            select.value = String(current);
+            if (valid === false) {
+                select.disabled = true;
+            } else {
+                select.disabled = false;
+                select.value = String(current);
+            }
         }
     }
 
