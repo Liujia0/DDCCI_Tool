@@ -44,71 +44,141 @@
     var scanOverlayEl = document.getElementById('scan-overlay');
 
     // ---- Log ----
+    //
+    // Each read/write operation is ONE record. The send half (logical content +
+    // send time) is recorded the instant the request leaves the bridge; the
+    // receive half (result detail, RX bytes, receive time) — plus the actual TX
+    // bytes, which the host only computes on response — is filled in when the
+    // matching response arrives. Sends are paired to responses FIFO within a key
+    // (method + vcpCode) so out-of-order responses still land on the right card.
 
     var logRecords = [];
     var MAX_LOG = 500;
+    var pendingByKey = {};   // pairing key -> [record, ...] awaiting a response
 
-    function addLogEntry(dir, op, detail, sendHex, recvHex) {
+    function nowStamp() {
         var now = new Date();
-        var time = ('0' + now.getHours()).slice(-2) + ':'
-                 + ('0' + now.getMinutes()).slice(-2) + ':'
-                 + ('0' + now.getSeconds()).slice(-2) + '.'
-                 + ('00' + now.getMilliseconds()).slice(-3);
-        logRecords.push({ time: time, dir: dir, op: op, detail: detail,
-                         sendHex: sendHex || '', recvHex: recvHex || '' });
-        if (logRecords.length > MAX_LOG) logRecords.shift();
-        if (!tabLog.classList.contains('hidden')) {
-            renderLogEntries();
+        return ('0' + now.getHours()).slice(-2) + ':'
+             + ('0' + now.getMinutes()).slice(-2) + ':'
+             + ('0' + now.getSeconds()).slice(-2) + '.'
+             + ('00' + now.getMilliseconds()).slice(-3);
+    }
+
+    function pushRecord(rec) {
+        logRecords.push(rec);
+        if (logRecords.length > MAX_LOG) {
+            var dropped = logRecords.shift();
+            // Drop any pending reference to the evicted record so we don't pair
+            // a future response onto a card that no longer exists.
+            for (var key in pendingByKey) {
+                if (!pendingByKey.hasOwnProperty(key)) continue;
+                var idx = pendingByKey[key].indexOf(dropped);
+                if (idx >= 0) pendingByKey[key].splice(idx, 1);
+            }
         }
+        renderIfVisible();
+    }
+
+    function renderIfVisible() {
+        if (!tabLog.classList.contains('hidden')) renderLogEntries();
     }
 
     function escapeHtml(s) {
-        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // Map a response type back to the request method that produced it, so
+    // responses can be matched to their pending send.
+    function typeToMethod(type) {
+        switch (type) {
+        case 'monitorList':   return 'enumerateMonitors';
+        case 'vcpFeature':    return 'getVCP';
+        case 'vcpSet':        return 'setVCP';
+        case 'capabilities':  return 'getCapabilities';
+        case 'rawResponse':   return 'sendRaw';
+        default:              return type;
+        }
+    }
+
+    function pairKey(method, vcpCode) {
+        if (method === 'getVCP' || method === 'setVCP') {
+            return method + ':' + vcpCode;
+        }
+        return method;
     }
 
     function renderLogEntries() {
         logEntriesEl.innerHTML = '';
         for (var i = 0; i < logRecords.length; i++) {
-            var r = logRecords[i];
-            var div = document.createElement('div');
-            div.className = 'log-entry';
-
-            var html = '<span class="log-time">' + r.time + '</span>'
-                + '<span class="log-dir ' + r.dir + '">' + (r.dir === 'send' ? '→' : '←') + '</span>'
-                + '<span class="log-op">' + r.op + '</span>'
-                + '<span class="log-detail">' + escapeHtml(r.detail) + '</span>';
-
-            if (r.sendHex) {
-                html += '<div class="log-hex-row"><span class="log-hex-label">TX:</span>'
-                    + '<span class="log-hex">' + escapeHtml(r.sendHex) + '</span></div>';
-            }
-            if (r.recvHex) {
-                html += '<div class="log-hex-row"><span class="log-hex-label">RX:</span>'
-                    + '<span class="log-hex">' + escapeHtml(r.recvHex) + '</span></div>';
-            }
-            div.innerHTML = html;
-            logEntriesEl.appendChild(div);
+            logEntriesEl.appendChild(renderLogCard(logRecords[i]));
         }
         logEntriesEl.scrollTop = logEntriesEl.scrollHeight;
+    }
+
+    function renderLogCard(r) {
+        var card = document.createElement('div');
+        card.className = 'log-card';
+
+        var html = '<div class="log-card-head">'
+            + '<span class="log-op">' + escapeHtml(r.op) + '</span>'
+            + (r.label ? '<span class="log-detail">' + escapeHtml(r.label) + '</span>' : '')
+            + '</div>';
+
+        // TX line: send time + sent bytes.
+        html += '<div class="log-line tx">'
+            + '<span class="log-dir send">TX</span>'
+            + '<span class="log-time">' + r.send.time + '</span>'
+            + '<span class="log-hex">' + escapeHtml(r.send.hex || '—') + '</span>'
+            + '</div>';
+
+        // RX line: receive time + result detail + received bytes (or a
+        // placeholder while the response is still outstanding).
+        if (r.recv) {
+            html += '<div class="log-line rx">'
+                + '<span class="log-dir recv">RX</span>'
+                + '<span class="log-time">' + r.recv.time + '</span>'
+                + (r.recv.detail ? '<span class="log-detail">' + escapeHtml(r.recv.detail) + '</span>' : '')
+                + (r.recv.hex ? '<span class="log-hex">' + escapeHtml(r.recv.hex) + '</span>' : '')
+                + '</div>';
+        } else {
+            html += '<div class="log-line rx pending">'
+                + '<span class="log-dir recv">RX</span>'
+                + '<span class="log-detail">等待中…</span>'
+                + '</div>';
+        }
+
+        card.innerHTML = html;
+        return card;
     }
 
     function vcpLabel(code) {
         return vcpCodeName(code) + ' (' + hex2(code) + ')';
     }
 
+    // Record the send half of an operation and queue it for pairing.
     function logSend(method, params) {
-        var detail = '';
+        var label = '';
         if (method === 'getVCP' || method === 'setVCP') {
-            detail = vcpLabel(params.vcpCode);
-            if (method === 'setVCP') detail += ' = ' + params.value;
+            label = vcpLabel(params.vcpCode);
+            if (method === 'setVCP') label += ' = ' + params.value;
         } else if (method === 'enumerateMonitors') {
-            detail = 'Scan monitors';
+            label = 'Scan monitors';
         } else if (method === 'getCapabilities') {
-            detail = 'Monitor ' + params.monitor;
+            label = 'Monitor ' + params.monitor;
         }
-        addLogEntry('send', method, detail);
+        var rec = {
+            op: method,
+            label: label,
+            send: { time: nowStamp(), hex: '' },  // TX bytes filled on response
+            recv: null
+        };
+        pushRecord(rec);
+        var key = pairKey(method, params && params.vcpCode);
+        (pendingByKey[key] = pendingByKey[key] || []).push(rec);
     }
 
+    // Fill in the receive half (and the now-known TX bytes) on the matching
+    // pending record.
     function logRecv(data) {
         var detail = '';
         if (data.type === 'monitorList') {
@@ -127,7 +197,23 @@
         } else if (data.error) {
             detail = 'ERROR: ' + data.error;
         }
-        addLogEntry('recv', data.type || 'response', detail, data.sendHex, data.recvHex);
+
+        var method = typeToMethod(data.type);
+        var key = pairKey(method, data.vcpCode);
+        var queue = pendingByKey[key];
+        var rec = (queue && queue.length) ? queue.shift() : null;
+
+        if (!rec) {
+            // No matching send (e.g. a host-initiated message). Show it as a
+            // recv-only card rather than dropping it.
+            rec = { op: data.type || 'response', label: '',
+                    send: { time: nowStamp(), hex: '' }, recv: null };
+            pushRecord(rec);
+        }
+
+        if (data.sendHex) rec.send.hex = data.sendHex;
+        rec.recv = { time: nowStamp(), hex: data.recvHex || '', detail: detail };
+        renderIfVisible();
     }
 
     // ---- Bridge helpers ----
@@ -196,22 +282,30 @@
             }
             currentCapsMap = capsMap;
             buildVCPControls(capsMap);
-            queryAllVCPFeatures(capsMap);
 
-            // Log each segment's send & receive individually.
+            // Log each segment's send & receive as its own paired card, BEFORE
+            // dispatching the per-VCP reads below. The segments are the wire
+            // detail of this single capabilities read, so they must sit right
+            // under the getCapabilities summary card — not after the getVCP
+            // cards that queryAllVCPFeatures() is about to push. Both halves of
+            // a segment exchange are already known, so each card is complete on
+            // creation.
             if (data.segments) {
                 for (var seg = 0; seg < data.segments.length; seg++) {
                     var sdata = data.segments[seg];
                     var label = 'caps[' + seg + ']';
                     if (data.segments.length > 1) label += ' ' + (seg + 1) + '/' + data.segments.length;
-                    addLogEntry('send', label, '', sdata.sendHex, '');
-                    if (sdata.recvHex) {
-                        addLogEntry('recv', label, '', '', sdata.recvHex);
-                    } else {
-                        addLogEntry('recv', label, '<read failed>', '', '');
-                    }
+                    pushRecord({
+                        op: label,
+                        label: '',
+                        send: { time: nowStamp(), hex: sdata.sendHex || '' },
+                        recv: { time: nowStamp(), hex: sdata.recvHex || '',
+                                detail: sdata.recvHex ? '' : '<read failed>' }
+                    });
                 }
             }
+
+            queryAllVCPFeatures(capsMap);
             break;
 
         case 'rawResponse':
@@ -747,6 +841,7 @@
 
     btnClearLogEl.addEventListener('click', function () {
         logRecords = [];
+        pendingByKey = {};
         logEntriesEl.innerHTML = '';
     });
 

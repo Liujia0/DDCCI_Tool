@@ -643,12 +643,29 @@ body::after {
     line-height: 1.7;
 }
 
-.log-entry {
-    padding: 3px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.03);
+.log-card {
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+
+.log-card-head {
     display: flex;
     gap: 8px;
     align-items: baseline;
+    margin-bottom: 2px;
+}
+
+.log-line {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    flex-wrap: wrap;
+    padding: 1px 0 1px 8px;
+}
+
+.log-line.pending .log-detail {
+    color: var(--text-muted);
+    font-style: italic;
 }
 
 .log-time {
@@ -660,9 +677,10 @@ body::after {
 
 .log-dir {
     flex-shrink: 0;
-    width: 16px;
+    width: 22px;
     font-weight: 700;
-    font-size: 12px;
+    font-size: 10px;
+    letter-spacing: 0.5px;
 }
 
 .log-dir.send { color: #5b8df0; }
@@ -683,23 +701,6 @@ body::after {
     word-break: break-all;
 }
 
-.log-hex-row {
-    display: flex;
-    gap: 6px;
-    padding: 1px 0 1px 0;
-    width: 100%;
-    margin-top: 1px;
-}
-
-.log-hex-label {
-    flex-shrink: 0;
-    width: 22px;
-    font-size: 10px;
-    font-weight: 700;
-    color: var(--text-muted);
-    text-align: right;
-}
-
 .log-hex {
     color: var(--accent);
     font-family: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
@@ -707,10 +708,6 @@ body::after {
     letter-spacing: 0.5px;
     word-break: break-all;
     line-height: 1.6;
-}
-
-.log-entry {
-    flex-wrap: wrap;
 }
 
 /* ---- Raw Command Tab ---- */
