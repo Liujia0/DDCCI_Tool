@@ -24,6 +24,9 @@
     var monitors = [];
     var activeMonitorIndex = -1;
     var currentCapsMap = {};   // {vcpCode: [subValues]} parsed from capabilities
+    var advancedVCPData = {};  // {code: {current, max, valid}}
+    var advancedRows = {};     // {code: {mhml, shsl, combined}} cell refs
+    var advancedTableBuilt = false;
 
     // ---- DOM refs ----
 
@@ -39,6 +42,8 @@
     var tabControls = document.getElementById('tab-controls');
     var tabLog = document.getElementById('tab-log');
     var tabRaw = document.getElementById('tab-raw');
+    var tabAdvanced = document.getElementById('tab-advanced');
+    var advTableBody = document.getElementById('adv-table-body');
     var logEntriesEl = document.getElementById('log-entries');
     var btnClearLogEl = document.getElementById('btn-clear-log');
     var scanOverlayEl = document.getElementById('scan-overlay');
@@ -260,6 +265,7 @@
 
         case 'vcpFeature':
             updateVCPUI(data.vcpCode, data.current, data.max, data.valid !== false);
+            updateAdvancedVCPRow(data.vcpCode, data.current, data.max, data.valid !== false);
             break;
 
         case 'vcpSet':
@@ -306,6 +312,8 @@
             }
 
             queryAllVCPFeatures(capsMap);
+            buildAdvancedTable(capsMap);
+            queryAllAdvancedVCP(capsMap);
             break;
 
         case 'rawResponse':
@@ -618,13 +626,205 @@
         }
     }
 
+    // ---- Advanced VCP table ----
+
+    function padHex4(val) {
+        var h = val.toString(16).toUpperCase();
+        while (h.length < 4) h = '0' + h;
+        return '0x' + h;
+    }
+
+    function padHex8(val) {
+        var h = val.toString(16).toUpperCase();
+        while (h.length < 8) h = '0' + h;
+        return '0x' + h;
+    }
+
+    function formatBin16(val) {
+        var b = val.toString(2);
+        while (b.length < 16) b = '0' + b;
+        return b.slice(0, 4) + ' ' + b.slice(4, 8) + ' ' + b.slice(8, 12) + ' ' + b.slice(12, 16);
+    }
+
+    function buildAdvancedTable(capsMap) {
+        advTableBody.innerHTML = '';
+        advancedRows = {};
+
+        var codes = [];
+        for (var codeStr in capsMap) {
+            if (!capsMap.hasOwnProperty(codeStr)) continue;
+            codes.push(parseInt(codeStr, 10));
+        }
+        codes.sort(function (a, b) { return a - b; });
+
+        if (codes.length === 0) {
+            var tr = document.createElement('tr');
+            var td = document.createElement('td');
+            td.colSpan = 6;
+            td.className = 'adv-empty';
+            td.textContent = 'No VCP codes reported by this monitor.';
+            tr.appendChild(td);
+            advTableBody.appendChild(tr);
+            advancedTableBuilt = true;
+            return;
+        }
+
+        for (var i = 0; i < codes.length; i++) {
+            var code = codes[i];
+            var tr = document.createElement('tr');
+
+            // VCP code column
+            var tdVcp = document.createElement('td');
+            tdVcp.className = 'adv-vcp-code';
+            tdVcp.textContent = '0x' + ('0' + code.toString(16).toUpperCase()).slice(-2);
+            tr.appendChild(tdVcp);
+
+            // MH-ML column
+            var tdMhml = document.createElement('td');
+            var mhmlPri = document.createElement('div');
+            mhmlPri.className = 'adv-val-primary';
+            mhmlPri.innerHTML = '<span class="adv-placeholder">&mdash;</span>';
+            var mhmlBin = document.createElement('div');
+            mhmlBin.className = 'adv-val-binary';
+            mhmlBin.innerHTML = '&nbsp;';
+            tdMhml.appendChild(mhmlPri);
+            tdMhml.appendChild(mhmlBin);
+            tr.appendChild(tdMhml);
+
+            // SH-SL column
+            var tdShsl = document.createElement('td');
+            var shslPri = document.createElement('div');
+            shslPri.className = 'adv-val-primary';
+            shslPri.innerHTML = '<span class="adv-placeholder">&mdash;</span>';
+            var shslBin = document.createElement('div');
+            shslBin.className = 'adv-val-binary';
+            shslBin.innerHTML = '&nbsp;';
+            tdShsl.appendChild(shslPri);
+            tdShsl.appendChild(shslBin);
+            tr.appendChild(tdShsl);
+
+            // MH-ML-SH-SL combined column
+            var tdComb = document.createElement('td');
+            tdComb.className = 'adv-val-primary';
+            tdComb.innerHTML = '<span class="adv-placeholder">&mdash;</span>';
+            tr.appendChild(tdComb);
+
+            // SET column (input + Set10 / Set16 buttons)
+            var tdSet = document.createElement('td');
+            var setWrap = document.createElement('div');
+            setWrap.className = 'adv-set-cell';
+            var inp = document.createElement('input');
+            inp.type = 'text';
+            inp.className = 'adv-set-input';
+            inp.placeholder = 'Value';
+            var btn10 = document.createElement('button');
+            btn10.className = 'adv-apply-btn';
+            btn10.textContent = 'Set10';
+            var btn16 = document.createElement('button');
+            btn16.className = 'adv-apply-btn';
+            btn16.textContent = 'Set16';
+            (function (c, input) {
+                btn10.addEventListener('click', function () {
+                    var raw = input.value.trim();
+                    if (raw === '') return;
+                    var val = parseInt(raw, 10);
+                    if (isNaN(val)) return;
+                    sendToHost('setVCP', { monitor: activeMonitorIndex, vcpCode: c, value: val });
+                });
+                btn16.addEventListener('click', function () {
+                    var raw = input.value.trim().replace(/^0x/i, '');
+                    if (raw === '') return;
+                    var val = parseInt(raw, 16);
+                    if (isNaN(val)) return;
+                    sendToHost('setVCP', { monitor: activeMonitorIndex, vcpCode: c, value: val });
+                });
+            })(code, inp);
+            setWrap.appendChild(inp);
+            setWrap.appendChild(btn10);
+            setWrap.appendChild(btn16);
+            tdSet.appendChild(setWrap);
+            tr.appendChild(tdSet);
+
+            // GET column
+            var tdGet = document.createElement('td');
+            var getBtn = document.createElement('button');
+            getBtn.className = 'adv-get-btn';
+            getBtn.textContent = 'Get';
+            (function (c) {
+                getBtn.addEventListener('click', function () {
+                    sendToHost('getVCP', { monitor: activeMonitorIndex, vcpCode: c });
+                });
+            })(code);
+            tdGet.appendChild(getBtn);
+            tr.appendChild(tdGet);
+
+            advTableBody.appendChild(tr);
+
+            advancedRows[code] = {
+                mhml: mhmlPri,
+                mhmlBin: mhmlBin,
+                shsl: shslPri,
+                shslBin: shslBin,
+                combined: tdComb
+            };
+        }
+
+        advancedTableBuilt = true;
+
+        // Populate with any data already received
+        for (var c in advancedVCPData) {
+            if (!advancedVCPData.hasOwnProperty(c)) continue;
+            updateAdvancedVCPRow(parseInt(c, 10),
+                advancedVCPData[c].current, advancedVCPData[c].max, advancedVCPData[c].valid);
+        }
+    }
+
+    function updateAdvancedVCPRow(code, current, max, valid) {
+        advancedVCPData[code] = { current: current, max: max, valid: valid };
+
+        var refs = advancedRows[code];
+        if (!refs) return;
+
+        if (valid === false) {
+            refs.mhml.innerHTML = '<span class="adv-placeholder">&lt;read failed&gt;</span>';
+            refs.mhmlBin.innerHTML = '&nbsp;';
+            refs.shsl.innerHTML = '<span class="adv-placeholder">&lt;read failed&gt;</span>';
+            refs.shslBin.innerHTML = '&nbsp;';
+            refs.combined.innerHTML = '<span class="adv-placeholder">&mdash;</span>';
+            return;
+        }
+
+        var MH = (max >> 8) & 0xFF;
+        var ML = max & 0xFF;
+        var SH = (current >> 8) & 0xFF;
+        var SL = current & 0xFF;
+        var mhmlVal = (MH << 8) | ML;
+        var shslVal = (SH << 8) | SL;
+        var combinedVal = ((MH << 24) | (ML << 16) | (SH << 8) | SL) >>> 0;
+
+        refs.mhml.textContent = padHex4(mhmlVal) + '(' + mhmlVal + ')';
+        refs.mhmlBin.textContent = '(' + formatBin16(mhmlVal) + ')';
+        refs.shsl.textContent = padHex4(shslVal) + '(' + shslVal + ')';
+        refs.shslBin.textContent = '(' + formatBin16(shslVal) + ')';
+        refs.combined.textContent = padHex8(combinedVal) + '(' + combinedVal + ')';
+    }
+
+    function queryAllAdvancedVCP(capsMap) {
+        for (var codeStr in capsMap) {
+            if (!capsMap.hasOwnProperty(codeStr)) continue;
+            var code = parseInt(codeStr, 10);
+            var def = vcpDef(code);
+            if (def) continue; // already queried by queryAllVCPFeatures
+            sendToHost('getVCP', { monitor: activeMonitorIndex, vcpCode: code });
+        }
+    }
+
     // ---- Raw command tab ----
 
     var rawHexInput = document.getElementById('raw-hex-input');
     var rawTxHex = document.getElementById('raw-tx-hex');
     var btnRawSend = document.getElementById('btn-raw-send');
     var rawResponse = document.getElementById('raw-response');
-    var rawQuickList = document.getElementById('raw-quick-list');
 
     function computeTxHex() {
         var hex = rawHexInput.value.replace(/\s+/g, ' ').trim();
@@ -679,39 +879,34 @@
         if (data.parsed) {
             html += '<div class="raw-resp-body">' + escapeHtml(data.parsed) + '</div>';
         }
+        if (data.mh !== undefined) {
+            var bytes = [
+                { label: 'MH', val: data.mh },
+                { label: 'ML', val: data.ml },
+                { label: 'SH', val: data.sh },
+                { label: 'SL', val: data.sl }
+            ];
+            html += '<div class="raw-byte-row">';
+            for (var i = 0; i < bytes.length; i++) {
+                if (i === 2) html += '</div><div class="raw-byte-row">';
+                var b = bytes[i];
+                var hex = '0x' + (b.val < 16 ? '0' : '') + b.val.toString(16).toUpperCase();
+                var bin = ('00000000' + b.val.toString(2)).slice(-8);
+                bin = bin.slice(0, 4) + ' ' + bin.slice(4);
+                var isMax = (i < 2);
+                html += '<span class="raw-byte-chip ' + (isMax ? 'raw-byte-max' : 'raw-byte-cur') + '">'
+                     + '<span class="raw-byte-label">' + b.label + '</span> '
+                     + '<span class="raw-byte-hex">' + hex + '</span> '
+                     + '<span class="raw-byte-dec">(' + b.val + ')</span>'
+                     + '<span class="raw-byte-bin">(' + bin + ')</span>'
+                     + '</span>';
+            }
+            html += '</div>';
+        }
         if (!html) {
             html = '<span class="raw-placeholder">No response data</span>';
         }
         rawResponse.innerHTML = html;
-    }
-
-    // Quick commands
-    var QUICK_COMMANDS = [
-        { label: 'Get Brightness (0x10)', hex: '01 10' },
-        { label: 'Get Contrast (0x12)', hex: '01 12' },
-        { label: 'Get Red Gain (0x16)', hex: '01 16' },
-        { label: 'Get Green Gain (0x18)', hex: '01 18' },
-        { label: 'Get Blue Gain (0x1A)', hex: '01 1A' },
-        { label: 'Get Input Source (0x60)', hex: '01 60' },
-        { label: 'Set Brightness=100', hex: '03 10 00 64' },
-        { label: 'Set Brightness=50', hex: '03 10 00 32' },
-        { label: 'Set Brightness=0', hex: '03 10 00 00' },
-        { label: 'Set Contrast=75', hex: '03 12 00 4B' },
-        { label: 'Capabilities', hex: 'F3 00 00' }
-    ];
-
-    for (var q = 0; q < QUICK_COMMANDS.length; q++) {
-        (function (cmd) {
-            var btn = document.createElement('button');
-            btn.className = 'raw-quick-btn';
-            btn.textContent = cmd.label;
-            btn.addEventListener('click', function () {
-                rawHexInput.value = cmd.hex;
-                computeTxHex();
-                btnRawSend.click();
-            });
-            rawQuickList.appendChild(btn);
-        })(QUICK_COMMANDS[q]);
     }
 
     function setStatus(text) {
@@ -794,6 +989,10 @@
         // supported codes in the 'capabilities' response handler above.
         currentCapsMap = {};
         vcpControlsEl.innerHTML = '';
+        advancedVCPData = {};
+        advancedRows = {};
+        advancedTableBuilt = false;
+        advTableBody.innerHTML = '';
         sendToHost('getCapabilities', { monitor: index });
     }
 
@@ -824,9 +1023,16 @@
 
                 // Show/hide tab content
                 tabControls.classList.toggle('hidden', targetTab !== 'controls');
+                tabAdvanced.classList.toggle('hidden', targetTab !== 'advanced');
                 tabLog.classList.toggle('hidden', targetTab !== 'log');
                 tabRaw.classList.toggle('hidden', targetTab !== 'raw');
 
+                if (targetTab === 'advanced') {
+                    if (advancedTableBuilt) {
+                        // Rebuild to reflect latest data
+                        buildAdvancedTable(currentCapsMap);
+                    }
+                }
                 if (targetTab === 'log') {
                     renderLogEntries();
                 }

@@ -8,7 +8,7 @@ Windows desktop application for reading/writing DDC/CI monitor settings (brightn
 - **Language**: C++17 + HTML/CSS/JS
 - **Build**: Visual Studio 2022 (Community), MSBuild
 - **UI Runtime**: Microsoft Edge WebView2 (NuGet package)
-- **Total source**: ~2440 lines across 9 files
+- **Total source**: ~4100 lines across 9 files
 
 ---
 
@@ -28,13 +28,13 @@ DDCCI_Tool/
 ├── MonitorManager.h            # Monitor info structs, manager class declaration     (46 lines)
 ├── MonitorManager.cpp          # DDC/CI API wrapper (dxva2)                          (272 lines)
 ├── WebViewBridge.h             # WebView2 host + JSON bridge declaration             (46 lines)
-├── WebViewBridge.cpp           # WebView2 init, JS bridge, DDC/CI packet hex         (618 lines)
+├── WebViewBridge.cpp           # WebView2 init, JS bridge, DDC/CI packet hex         (646 lines)
 └── web/
-    ├── index.html              # Main page: sidebar + tabs (Controls/Log/Raw)        (96 lines)
-    ├── style.css               # Dark theme CSS                                      (665 lines)
+    ├── index.html              # Main page: sidebar + tabs (Controls/Advanced/Log/Raw)(138 lines)
+    ├── style.css               # Glass morphism themes (5 themes) + dark mode         (1302 lines)
     ├── logo.svg                # App logo (monitor + brightness motif, accent blue)
     ├── mccs.js                 # MCCS 2.2a VCP definition table (152 codes)          (438 lines)
-    └── app.js                  # Frontend logic, bridge, logging                     (595 lines)
+    └── app.js                  # Frontend logic, bridge, logging, advanced VCP table  (1092 lines)
 ```
 
 Output: `bin/x64/Debug/DDCCI_Tool.exe` + `web/` + `WebView2Loader.dll`
@@ -138,7 +138,7 @@ Standard Win32 entry point:
 
 #### index.html
 - Sidebar: monitor list + refresh button + status bar
-- Main panel: Controls tab (VCP sliders + capabilities viewer), Log tab, Raw command tab
+- Main panel: Controls tab (VCP sliders + capabilities viewer), **Advanced tab (raw VCP table)**, Log tab, Raw command tab
 
 #### app.js (IIFE pattern)
 - **MCCS-driven controls**: control definitions come entirely from `web/mccs.js`
@@ -155,7 +155,8 @@ Standard Win32 entry point:
   does not define (manufacturer-specific) are **not** shown in Controls.
 - **Log system**: `logRecords[]` array (max 500), `addLogEntry(dir, op, detail, sendHex, recvHex)`, `renderLogEntries()` renders log with TX/RX hex rows. VCP names come from the MCCS table (`vcpCodeName()`). Per-segment capabilities logging with `<read failed>` fallback
 - **Raw command tab**: hex input with real-time TX packet preview (`computeTxHex()` auto-calculates `0x80|len` + CHK), quick command presets (`01 10`, `F3 00 00` etc.), response display with TX/RX/parsed info
-- **Tab switching**: Controls | Log | Raw
+- **Tab switching**: Controls | **Advanced** | Log | Raw
+- **Advanced tab**: Lists all VCP codes from capabilities (without MCCS filtering), showing raw MH-ML / SH-SL / MH-ML-SH-SL values in hex+decimal+binary format. SET column with Set10 (decimal) / Set16 (hex) buttons for writing values. GET column with per-row Get button for refreshing individual VCP reads. Data auto-updates when `vcpFeature` responses arrive.
 - **Bridge**: `window.__bridgeReceive(data)` called by C++ via ExecuteScript, dispatches to `dispatchResponse()`
 
 #### mccs.js
@@ -167,7 +168,7 @@ Each `vcp[code]` has `{ name, group, access:'rw'|'ro'|'wo', type:'C'|'NC'|'T', v
 (restore-defaults family, degauss). Generated from `SPEC/MCCS 2.2a.pdf` Section 8 tables.
 
 #### style.css
-Dark theme using CSS variables. Key colors: `--bg-primary: #1e1e2e`, `--accent: #5b8df0`, `--sidebar-width: 220px`. Scrollbar styling, slider thumb styling, monospace log entries.
+Glass morphism theme system with 5 switchable themes (Glass/Apple, Graphite Gold, Nord Frost, Cyber Neon, Light Mode) using CSS variables (`--bg-base`, `--glass-bg`, `--accent`, `--text-primary/secondary/muted` etc.). Legacy aliases for backward compatibility. Dark theme default: `--bg-primary: #1e1e2e`, `--accent: #5b8df0`, `--sidebar-width: 220px`. Scrollbar styling, slider thumb styling, monospace log entries. Advanced table styling with sticky headers and monospace data cells.
 
 ---
 
@@ -281,6 +282,7 @@ The post-build step copies `web/` to the output directory (`bin/x64/Debug/web/`)
 | Tab | Purpose |
 |-----|---------|
 | **Controls** | MCCS-driven controls for every supported VCP code, grouped by functional category (slider / dropdown / read-only / action button by type) + collapsible capabilities string viewer |
+| **Advanced** | Raw VCP code table listing all codes from capabilities without MCCS filtering. Shows MH-ML / SH-SL / MH-ML-SH-SL in hex+decimal+binary. SET column (Set10 decimal / Set16 hex) + GET column (per-row read refresh) |
 | **Log** | DDC/CI read/write log with timestamps, direction arrows (→ send, ← recv), VCP code names, TX/RX hex rows. Clear button. 500-entry cap. |
 | **Raw** | Hex body input with real-time TX preview (auto checksum), Send button, response display, quick command presets (11 presets) |
 
@@ -301,6 +303,6 @@ The post-build step copies `web/` to the output directory (`bin/x64/Debug/web/`)
    （无 MCCS 定义）不在 Controls 中显示。表（T）类与 LUT/Timing 等结构化指令目前仅做只读展示，
    尚未实现写入编排（可在高级页面中扩展，见第 5 项）。
 
-5. **添加高级/客制化指令页面** — 设计一个高级页面用于自定义 DDC/CI 指令序列：支持多步指令编排、条件执行、延时控制、重复发送等，方便客制化调试和工厂测试场景
+5. **~~添加高级/客制化指令页面~~（已部分完成）** — 已实现 Advanced 标签页，列出显示器 capabilities 中所有 VCP Code 的原始数据（MH-ML/SH-SL/MH-ML-SH-SL hex+decimal+binary），支持按十进制或十六进制发送 setVCP，以及单条 VCP 读取刷新。待扩展：多步指令编排、条件执行、延时控制、重复发送等客制化调试和工厂测试功能
 
 6. **未完待续补充** — 其他待定功能（如：监视器热插拔检测、快捷键支持、配置文件导入导出、多语言 i18n、命令行模式、日志导出、VCP 预设方案保存/加载等）

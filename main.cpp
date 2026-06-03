@@ -9,7 +9,7 @@
 
 static const wchar_t* WINDOW_CLASS = L"DDCCI_Tool_Window";
 static const wchar_t* WINDOW_TITLE = L"DDCCI Monitor Tool";
-static const int WINDOW_WIDTH  = 960;
+static const int WINDOW_WIDTH  = 1150;
 static const int WINDOW_HEIGHT = 680;
 
 struct AppState {

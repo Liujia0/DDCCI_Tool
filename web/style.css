@@ -838,29 +838,196 @@ body::after {
     font-size: 13px;
 }
 
-.raw-quick-list {
+.raw-byte-row {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 8px;
+    margin-top: 10px;
 }
 
-.raw-quick-btn {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    color: var(--text-secondary);
+.raw-byte-chip {
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 12px;
     padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    line-height: 1;
+}
+
+.raw-byte-max {
+    background: rgba(255, 159, 10, 0.12);
+    border-color: rgba(255, 159, 10, 0.3);
+}
+
+.raw-byte-cur {
+    background: rgba(48, 209, 88, 0.12);
+    border-color: rgba(48, 209, 88, 0.3);
+}
+
+.raw-byte-label {
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-right: 2px;
+}
+
+.raw-byte-hex {
+    color: var(--text-primary);
+}
+
+.raw-byte-dec {
+    color: var(--text-dim);
+    margin-left: 3px;
+}
+
+.raw-byte-bin {
+    color: var(--text-dim);
+    margin-left: 3px;
+    opacity: 0.85;
+}
+
+/* ---- Advanced VCP Table ---- */
+
+.adv-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    table-layout: auto;
+}
+
+.adv-table th {
+    text-align: left;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    background: var(--bg-primary);
+    z-index: 1;
+}
+
+.adv-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    vertical-align: top;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 12px;
+    color: var(--text-primary);
+}
+
+.adv-table tr:hover td {
+    background: var(--bg-hover);
+}
+
+.adv-vcp-code {
+    font-weight: 600;
+    color: var(--accent);
+    white-space: nowrap;
+}
+
+.adv-val-primary {
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 12px;
+    color: var(--text-primary);
+    line-height: 1.4;
+}
+
+.adv-val-binary {
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-top: 2px;
+    line-height: 1.3;
+}
+
+.adv-set-cell {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.adv-set-input {
+    width: 48px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 4px 6px;
     border-radius: 4px;
     font-family: 'Cascadia Code', 'Consolas', monospace;
-    font-size: 11px;
-    cursor: pointer;
-    transition: all 0.15s;
-    letter-spacing: 0.5px;
+    font-size: 12px;
+    outline: none;
+    transition: border-color 0.15s;
 }
 
-.raw-quick-btn:hover {
-    background: var(--bg-hover);
-    color: var(--text-primary);
+.adv-set-input:focus {
     border-color: var(--accent);
+}
+
+.adv-set-input::placeholder {
+    color: var(--text-muted);
+}
+
+.adv-apply-btn {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+
+.adv-apply-btn:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent);
+}
+
+.adv-apply-btn:active {
+    background: var(--accent-bg);
+    border-color: var(--accent);
+}
+
+.adv-get-btn {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    color: var(--accent);
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+
+.adv-get-btn:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent);
+}
+
+.adv-get-btn:active {
+    background: var(--accent-bg);
+    border-color: var(--accent);
+}
+
+.adv-placeholder {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.adv-empty {
+    padding: 24px 0;
+    font-size: 13px;
+    color: var(--text-muted);
+    text-align: center;
 }
 
 /* ---- Scrollbar ---- */

@@ -47,6 +47,7 @@
                     <h2 id="monitor-name">Monitor Name</h2>
                     <nav class="panel-tabs">
                         <button class="tab-btn active" data-tab="controls">Controls</button>
+                        <button class="tab-btn" data-tab="advanced">Advanced</button>
                         <button class="tab-btn" data-tab="log">Log</button>
                         <button class="tab-btn" data-tab="raw">Raw</button>
                     </nav>
@@ -61,6 +62,23 @@
                             </h3>
                             <pre id="caps-content" class="hidden"></pre>
                         </div>
+                    </div>
+                </div>
+                <div class="tab-content hidden" id="tab-advanced">
+                    <div class="controls-scroll">
+                        <table class="adv-table" id="adv-table">
+                            <thead>
+                                <tr>
+                                    <th>VCP</th>
+                                    <th>MH-ML</th>
+                                    <th>SH-SL</th>
+                                    <th>MH-ML-SH-SL</th>
+                                    <th>SET</th>
+                                    <th>GET</th>
+                                </tr>
+                            </thead>
+                            <tbody id="adv-table-body"></tbody>
+                        </table>
                     </div>
                 </div>
                 <div class="tab-content hidden" id="tab-log">
@@ -93,10 +111,6 @@
                             <div id="raw-response" class="raw-response">
                                 <span class="raw-placeholder">Send a command to see the response</span>
                             </div>
-                        </div>
-                        <div class="raw-section">
-                            <h3 class="section-title">Quick Commands</h3>
-                            <div class="raw-quick-list" id="raw-quick-list"></div>
                         </div>
                     </div>
                 </div>
