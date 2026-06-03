@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DDCCI Monitor Tool v0.8.1</title>
+    <title>DDCCI Monitor Tool v0.8.2</title>
     <link rel="icon" href="logo.svg" type="image/svg+xml">
     <link rel="stylesheet" href="style.css">
 </head>
@@ -32,6 +32,7 @@
             </div>
             <div class="sidebar-footer">
                 <span id="status-text">Ready</span>
+                <button id="btnCheckUpdate" class="sidebar-update-btn" title="Check for Updates">⟳ Update</button>
             </div>
         </aside>
 
@@ -129,6 +130,27 @@
             </div>
             <div class="scan-title">Scanning monitors</div>
             <div class="scan-sub">Detecting DDC/CI capable displays&hellip;</div>
+        </div>
+    </div>
+
+    <!-- Update Modal -->
+    <div class="modal-overlay" id="updateModal">
+        <div class="modal">
+            <h3 id="updateTitle">Check for Updates</h3>
+            <div id="updateBody" style="margin:8px 0">
+                <p id="updateStatus">Checking...</p>
+                <div id="updateProgressWrap" style="display:none;margin-top:8px">
+                    <div class="loading-bar-track"><div class="loading-bar-fill" id="updateProgress" style="width:0%"></div></div>
+                    <p id="updateProgressText" style="font-size:11px;color:var(--text-dim);margin-top:4px">0%</p>
+                </div>
+                <pre id="updateNotes" style="display:none;max-height:200px;overflow:auto;font-size:11px"></pre>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button class="btn btn-primary" id="btnDownloadUpdate" style="display:none">Download &amp; Install</button>
+                <button class="btn" id="btnViewRelease" style="display:none">Open Release Page</button>
+                <button class="btn" id="btnRestartNow" style="display:none">Restart Now</button>
+                <button class="btn" id="btnCloseUpdate">Close</button>
+            </div>
         </div>
     </div>
 

@@ -5,7 +5,10 @@
 #include <wrl/client.h>
 #include <wrl/event.h>
 #include <string>
+#include <future>
+#include <mutex>
 #include <WebView2.h>
+#include "UpdateChecker.h"
 
 class MonitorManager;
 
@@ -38,6 +41,14 @@ private:
 
     std::wstring GetWebDirPath();
 
+    // Update check handlers
+    std::wstring HandleStartUpdateCheck();
+    std::wstring HandlePollUpdateCheck();
+    std::wstring HandleDownloadUpdate(const std::wstring& json);
+    std::wstring HandleGetDownloadProgress();
+    std::wstring HandleApplyUpdate();
+    std::wstring HandleOpenUrl(const std::wstring& json);
+
     HWND m_hwnd = nullptr;
     MonitorManager* m_monitorMgr = nullptr;
     Microsoft::WRL::ComPtr<ICoreWebView2Controller> m_controller;
@@ -46,4 +57,16 @@ private:
     EventRegistrationToken m_navCompleteToken = {};
     std::wstring m_webDir;
     std::wstring m_dataDir;
+
+    // Update check async state
+    std::future<UpdateInfo> m_checkFuture;
+    std::mutex m_checkMutex;
+    bool m_checkInProgress = false;
+    UpdateInfo m_checkResult;
+
+    // Download async state
+    std::future<std::wstring> m_downloadFuture;
+    std::mutex m_downloadMutex;
+    double m_downloadProgress = 0.0;
+    std::wstring m_pendingUpdatePath;
 };

@@ -329,6 +329,10 @@
 
     // Called directly by C++ via ExecuteScript (bypasses PostWebMessageAsJson)
     window.__bridgeReceive = function(data) {
+        if (data && data._update) {
+            handleUpdateResponse(data);
+            return;
+        }
         dispatchResponse(data);
     };
 
@@ -1073,6 +1077,160 @@
         applyTheme(saved);
     })();
 
+    // ===== Update Check =====
+    var pendingUpdate = null;
+    var _updateResolve = null;
+
+    function handleUpdateResponse(data) {
+        if (_updateResolve) {
+            var fn = _updateResolve;
+            _updateResolve = null;
+            fn(data);
+        }
+    }
+
+    function callUpdateBridge(method, params) {
+        return new Promise(function (resolve) {
+            _updateResolve = resolve;
+            var msg = { method: method };
+            if (params) {
+                for (var k in params) {
+                    if (params.hasOwnProperty(k)) msg[k] = params[k];
+                }
+            }
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage(JSON.stringify(msg));
+            }
+        });
+    }
+
+    function showUpdateModal() {
+        document.getElementById('updateModal').classList.add('show');
+    }
+
+    function setUpdateUI(opts) {
+        document.getElementById('updateStatus').innerHTML = opts.status || '';
+        document.getElementById('updateNotes').style.display = opts.notes ? 'block' : 'none';
+        if (opts.notes) document.getElementById('updateNotes').textContent = opts.notes;
+        document.getElementById('btnDownloadUpdate').style.display = opts.canDownload ? '' : 'none';
+        document.getElementById('btnViewRelease').style.display = opts.releaseUrl ? '' : 'none';
+        document.getElementById('btnRestartNow').style.display = opts.canRestart ? '' : 'none';
+        document.getElementById('updateProgressWrap').style.display = opts.showProgress ? 'block' : 'none';
+    }
+
+    async function checkForUpdates(silent) {
+        if (!silent) {
+            showUpdateModal();
+            setUpdateUI({ status: 'Checking GitHub for the latest release...' });
+        }
+        try {
+            var startRes = await callUpdateBridge('startUpdateCheck');
+            if (!startRes.success) {
+                if (!silent) setUpdateUI({ status: 'Check failed: ' + escapeHtml(startRes.error || 'unknown error') });
+                else setStatus('Update check failed: ' + (startRes.error || ''));
+                return;
+            }
+            var res = await new Promise(function (resolve) {
+                var poll = setInterval(async function () {
+                    try {
+                        var r = await callUpdateBridge('pollUpdateCheck');
+                        if (!r.pending) { clearInterval(poll); resolve(r); }
+                    } catch (e) { clearInterval(poll); resolve({ success: false, error: e.message }); }
+                }, 250);
+            });
+            if (!res.success) {
+                if (!silent) setUpdateUI({ status: 'Check failed: ' + escapeHtml(res.error || 'unknown error') });
+                else setStatus('Update check failed: ' + (res.error || ''));
+                return;
+            }
+            pendingUpdate = res;
+            if (res.hasUpdate) {
+                if (silent) showUpdateModal();
+                var sizeMb = res.assetSize ? (res.assetSize / 1024 / 1024).toFixed(2) + ' MB' : '';
+                setUpdateUI({
+                    status: 'New version <b>' + escapeHtml(res.latestVersion) + '</b> available (current: ' + escapeHtml(res.currentVersion) + ').'
+                        + (res.assetName ? '<br>Asset: ' + escapeHtml(res.assetName) + (sizeMb ? ' (' + sizeMb + ')' : '') : ''),
+                    notes: res.releaseNotes,
+                    canDownload: !!res.downloadUrl,
+                    releaseUrl: res.releaseUrl
+                });
+                document.getElementById('btnViewRelease').onclick = function () { callUpdateBridge('openUrl', { url: res.releaseUrl }); };
+            } else if (!silent) {
+                setUpdateUI({
+                    status: 'You are on the latest version (' + escapeHtml(res.currentVersion) + ').',
+                    releaseUrl: res.releaseUrl
+                });
+                if (res.releaseUrl) document.getElementById('btnViewRelease').onclick = function () { callUpdateBridge('openUrl', { url: res.releaseUrl }); };
+            }
+        } catch (e) {
+            if (!silent) setUpdateUI({ status: 'Check error: ' + escapeHtml(e.message) });
+        }
+    }
+
+    async function downloadAndInstall() {
+        if (!pendingUpdate || !pendingUpdate.downloadUrl) return;
+        document.getElementById('btnDownloadUpdate').disabled = true;
+        setUpdateUI({
+            status: 'Downloading ' + escapeHtml(pendingUpdate.assetName) + '...',
+            showProgress: true,
+            releaseUrl: pendingUpdate.releaseUrl
+        });
+        try {
+            var startRes = await callUpdateBridge('downloadUpdate', { url: pendingUpdate.downloadUrl });
+            if (!startRes.success) {
+                setUpdateUI({ status: 'Download failed: ' + escapeHtml(startRes.error), releaseUrl: pendingUpdate.releaseUrl });
+                document.getElementById('btnDownloadUpdate').disabled = false;
+                return;
+            }
+            var res = await new Promise(function (resolve) {
+                var poll = setInterval(async function () {
+                    try {
+                        var p = await callUpdateBridge('getDownloadProgress');
+                        var pct = Math.round((p.progress || 0) * 100);
+                        document.getElementById('updateProgress').style.width = pct + '%';
+                        document.getElementById('updateProgressText').textContent = pct + '%';
+                        if (p.done) { clearInterval(poll); resolve(p); }
+                    } catch (e) { clearInterval(poll); resolve({ success: false, error: e.message }); }
+                }, 300);
+            });
+            document.getElementById('updateProgress').style.width = '100%';
+            document.getElementById('updateProgressText').textContent = '100%';
+            if (!res.success) {
+                setUpdateUI({ status: 'Download failed: ' + escapeHtml(res.error), releaseUrl: pendingUpdate.releaseUrl });
+                document.getElementById('btnDownloadUpdate').disabled = false;
+                return;
+            }
+            setUpdateUI({
+                status: 'Download complete. Click <b>Restart Now</b> to install — the app will close, swap the file, and relaunch.',
+                canRestart: true,
+                releaseUrl: pendingUpdate.releaseUrl
+            });
+        } catch (e) {
+            setUpdateUI({ status: 'Download error: ' + escapeHtml(e.message), releaseUrl: pendingUpdate.releaseUrl });
+            document.getElementById('btnDownloadUpdate').disabled = false;
+        }
+    }
+
+    async function applyUpdateNow() {
+        try {
+            var res = await callUpdateBridge('applyUpdate');
+            if (!res.success) {
+                setUpdateUI({ status: 'Apply failed: ' + escapeHtml(res.error) });
+                return;
+            }
+            setUpdateUI({ status: 'Restarting...' });
+        } catch (e) {
+            setUpdateUI({ status: 'Apply error: ' + escapeHtml(e.message) });
+        }
+    }
+
+    document.getElementById('btnCheckUpdate').addEventListener('click', function () { checkForUpdates(false); });
+    document.getElementById('btnDownloadUpdate').addEventListener('click', downloadAndInstall);
+    document.getElementById('btnRestartNow').addEventListener('click', applyUpdateNow);
+    document.getElementById('btnCloseUpdate').addEventListener('click', function () {
+        document.getElementById('updateModal').classList.remove('show');
+    });
+
     // ---- Init ----
 
     var _bridgeReady = false;
@@ -1089,4 +1247,6 @@
         }
     }
     init();
+    // Silent update check 2s after start; if a new version is found, the modal pops up.
+    setTimeout(function () { try { checkForUpdates(true); } catch (e) {} }, 2000);
 })();

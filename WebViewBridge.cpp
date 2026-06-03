@@ -485,6 +485,17 @@ HRESULT WebViewBridge::OnWebMessageReceived(ICoreWebView2*, ICoreWebView2WebMess
     BridgeLog(L"=== C++ received: %s", rawMessage);
 
     std::wstring response = HandleRequest(rawMessage);
+
+    // Tag update-related responses with "_update":true so that JS routes them
+    // to handleUpdateResponse() instead of the normal dispatchResponse() path.
+    std::wstring method = ExtractJsonString(rawMessage, L"method");
+    bool isUpdateMethod = (method == L"startUpdateCheck" || method == L"pollUpdateCheck" ||
+                           method == L"downloadUpdate" || method == L"getDownloadProgress" ||
+                           method == L"applyUpdate" || method == L"openUrl");
+    if (isUpdateMethod && !response.empty() && response[0] == L'{') {
+        response = L"{\"_update\":true," + response.substr(1);
+    }
+
     CoTaskMemFree(rawMessage);
 
     BridgeLog(L"C++ response: %s", response.c_str());
@@ -547,6 +558,13 @@ std::wstring WebViewBridge::HandleRequest(const std::wstring& json) {
         if (monitorIndex < 0 || bodyHex.empty()) return BuildError(L"Missing parameters");
         return BuildRawCommandResponse(monitorIndex, bodyHex);
     }
+
+    if (method == L"startUpdateCheck") return HandleStartUpdateCheck();
+    if (method == L"pollUpdateCheck")  return HandlePollUpdateCheck();
+    if (method == L"downloadUpdate")   return HandleDownloadUpdate(json);
+    if (method == L"getDownloadProgress") return HandleGetDownloadProgress();
+    if (method == L"applyUpdate")      return HandleApplyUpdate();
+    if (method == L"openUrl")          return HandleOpenUrl(json);
 
     return BuildError(L"Unknown method: " + method);
 }
@@ -758,4 +776,134 @@ std::wstring WebViewBridge::BuildRawCommandResponse(int monitorIndex, const std:
        << L",\"parsed\":\"" << EscapeJson(parseInfo) << L"\""
        << L"}";
     return ss.str();
+}
+
+// ---- Update check handlers ----
+
+std::wstring WebViewBridge::HandleStartUpdateCheck() {
+    std::lock_guard<std::mutex> lock(m_checkMutex);
+
+    // If already in progress and future not yet ready, just return success
+    if (m_checkInProgress && m_checkFuture.valid() &&
+        m_checkFuture.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+        return L"{\"success\":true}";
+    }
+
+    m_checkFuture = std::async(std::launch::async, UpdateChecker::CheckForUpdate);
+    m_checkInProgress = true;
+    return L"{\"success\":true}";
+}
+
+std::wstring WebViewBridge::HandlePollUpdateCheck() {
+    std::lock_guard<std::mutex> lock(m_checkMutex);
+
+    if (!m_checkInProgress || !m_checkFuture.valid()) {
+        return L"{\"success\":true,\"pending\":false,\"hasUpdate\":false}";
+    }
+
+    if (m_checkFuture.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+        return L"{\"success\":true,\"pending\":true}";
+    }
+
+    // Future is ready — get result
+    UpdateInfo info = m_checkFuture.get();
+    m_checkInProgress = false;
+
+    std::wostringstream ss;
+    ss << L"{"
+       << L"\"success\":" << (info.error.empty() ? L"true" : L"false") << L","
+       << L"\"pending\":false,"
+       << L"\"hasUpdate\":" << (info.hasUpdate ? L"true" : L"false") << L","
+       << L"\"currentVersion\":\"" << EscapeJson(info.currentVersion) << L"\","
+       << L"\"latestVersion\":\"" << EscapeJson(info.latestVersion) << L"\","
+       << L"\"releaseUrl\":\"" << EscapeJson(info.releaseUrl) << L"\","
+       << L"\"downloadUrl\":\"" << EscapeJson(info.downloadUrl) << L"\","
+       << L"\"assetName\":\"" << EscapeJson(info.assetName) << L"\","
+       << L"\"assetSize\":" << info.assetSize << L","
+       << L"\"releaseNotes\":\"" << EscapeJson(info.releaseNotes) << L"\","
+       << L"\"error\":\"" << EscapeJson(info.error) << L"\""
+       << L"}";
+    return ss.str();
+}
+
+std::wstring WebViewBridge::HandleDownloadUpdate(const std::wstring& json) {
+    std::wstring url = ExtractJsonString(json, L"url");
+    if (url.empty()) return BuildError(L"Missing download URL");
+
+    {
+        std::lock_guard<std::mutex> lock(m_downloadMutex);
+        m_downloadProgress = 0.0;
+        m_pendingUpdatePath.clear();
+    }
+
+    m_downloadFuture = std::async(std::launch::async, [this, url]() {
+        return UpdateChecker::DownloadUpdate(url, [this](double progress) {
+            std::lock_guard<std::mutex> lock(m_downloadMutex);
+            m_downloadProgress = progress;
+        });
+    });
+
+    return L"{\"success\":true,\"started\":true}";
+}
+
+std::wstring WebViewBridge::HandleGetDownloadProgress() {
+    std::lock_guard<std::mutex> lock(m_downloadMutex);
+
+    double progress = m_downloadProgress;
+    bool done = false;
+    std::wstring error;
+    std::wstring path;
+
+    if (m_downloadFuture.valid() &&
+        m_downloadFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        done = true;
+        path = m_downloadFuture.get();
+        if (path.empty()) {
+            error = L"Download failed";
+        } else {
+            m_pendingUpdatePath = path;
+        }
+    }
+
+    bool downloadOk = !done || error.empty(); // success=false only when done AND failed
+    std::wostringstream ss;
+    ss << L"{"
+       << L"\"success\":" << (downloadOk ? L"true" : L"false") << L","
+       << L"\"progress\":" << progress << L","
+       << L"\"done\":" << (done ? L"true" : L"false") << L","
+       << L"\"error\":\"" << EscapeJson(error) << L"\","
+       << L"\"path\":\"" << EscapeJson(path) << L"\""
+       << L"}";
+    return ss.str();
+}
+
+std::wstring WebViewBridge::HandleApplyUpdate() {
+    std::wstring updatePath;
+    {
+        std::lock_guard<std::mutex> lock(m_downloadMutex);
+        updatePath = m_pendingUpdatePath;
+    }
+
+    if (updatePath.empty()) {
+        return BuildError(L"No pending update");
+    }
+
+    if (!UpdateChecker::ApplyAndRestart(updatePath)) {
+        return BuildError(L"Failed to prepare update");
+    }
+
+    // Post WM_CLOSE to allow JS to receive response before exit
+    if (m_hwnd) {
+        PostMessageW(m_hwnd, WM_CLOSE, 0, 0);
+    }
+
+    return L"{\"success\":true}";
+}
+
+std::wstring WebViewBridge::HandleOpenUrl(const std::wstring& json) {
+    std::wstring url = ExtractJsonString(json, L"url");
+    if (url.empty()) return BuildError(L"Missing URL");
+
+    UpdateChecker::OpenUrl(url);
+    return L"{\"success\":true}";
 }
