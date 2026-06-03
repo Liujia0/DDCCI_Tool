@@ -20,6 +20,7 @@ public:
     HRESULT Initialize(HWND hwnd);
     void Resize();
     void Close();
+    void ExtractWebResources(HINSTANCE hInstance);
 
 private:
     HRESULT OnEnvironmentCreated(HWND hwnd, HRESULT result, ICoreWebView2Environment* env);
@@ -35,7 +36,7 @@ private:
     std::wstring BuildRawCommandResponse(int monitorIndex, const std::wstring& bodyHex);
     std::wstring EscapeJson(const std::wstring& s);
 
-    static std::wstring GetWebDirPath();
+    std::wstring GetWebDirPath();
 
     HWND m_hwnd = nullptr;
     MonitorManager* m_monitorMgr = nullptr;
@@ -43,4 +44,6 @@ private:
     Microsoft::WRL::ComPtr<ICoreWebView2> m_webview;
     EventRegistrationToken m_webMessageToken = {};
     EventRegistrationToken m_navCompleteToken = {};
+    std::wstring m_webDir;
+    std::wstring m_dataDir;
 };

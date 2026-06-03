@@ -28,6 +28,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
         g_app->monitorMgr.EnumerateMonitors();
 
+        // Extract embedded web resources to cache dir (or use web/ next to exe in dev mode)
+        g_app->bridge.ExtractWebResources(
+            reinterpret_cast<HINSTANCE>(GetModuleHandleW(nullptr)));
+
         if (FAILED(g_app->bridge.Initialize(hwnd))) {
             MessageBoxW(hwnd,
                 L"Failed to initialize WebView2. Please ensure the WebView2 Runtime is installed.\n\n"

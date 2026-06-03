@@ -50,6 +50,11 @@
 
   <PropertyGroup Label="UserMacros" />
 
+  <!-- Static-link WebView2Loader to eliminate WebView2Loader.dll from output -->
+  <PropertyGroup>
+    <WebView2LoaderPreference>Static</WebView2LoaderPreference>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\</OutDir>
     <IntDir>$(SolutionDir)obj\$(Platform)\$(Configuration)\</IntDir>
@@ -67,6 +72,7 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -83,7 +89,8 @@
       <PreprocessorDefinitions>NDEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -100,8 +107,9 @@
     <ClCompile Include="WebViewBridge.cpp" />
   </ItemGroup>
 
-  <Target Name="CopyWebFiles" AfterTargets="Build">
-    <Message Text="Copying web/ to output directory" Importance="high" />
+  <!-- Web files are now embedded as Win32 resources; only copy for Debug builds -->
+  <Target Name="CopyWebFiles" AfterTargets="Build" Condition="'$(Configuration)'=='Debug'">
+    <Message Text="Copying web/ to output directory (Debug only)" Importance="high" />
     <ItemGroup>
       <WebFiles Include="web\**\*" />
     </ItemGroup>
@@ -124,6 +132,7 @@
     <None Include="web\style.css" />
     <None Include="web\app.js" />
     <None Include="web\mccs.js" />
+    <None Include="web\logo.svg" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

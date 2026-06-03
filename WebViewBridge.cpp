@@ -1,9 +1,11 @@
 #include "WebViewBridge.h"
 #include "MonitorManager.h"
+#include "resource.h"
 #include <sstream>
 #include <algorithm>
 #include <cwctype>
 #include <cstdarg>
+#include <vector>
 
 namespace {
 
@@ -224,6 +226,11 @@ void WebViewBridge::Close() {
 }
 
 std::wstring WebViewBridge::GetWebDirPath() {
+    // If web resources have been extracted to temp, use that path
+    if (!m_webDir.empty())
+        return m_webDir;
+
+    // Fallback: look for web/ folder next to the exe (Debug/dev mode)
     WCHAR path[MAX_PATH];
     GetModuleFileNameW(nullptr, path, MAX_PATH);
     std::wstring dir(path);
@@ -233,11 +240,118 @@ std::wstring WebViewBridge::GetWebDirPath() {
     return dir + L"\\web";
 }
 
+// ---- Embedded web resource extraction ----
+
+namespace {
+
+    // Resource entry: { resource ID, filename to write }
+    struct WebResourceEntry {
+        int resourceId;
+        const wchar_t* fileName;
+    };
+
+    bool SaveResourceToFile(const std::wstring& dirPath, int resourceId,
+                            const wchar_t* fileName) {
+        HRSRC hRes = FindResourceW(nullptr, MAKEINTRESOURCEW(resourceId), L"WEBRES");
+        if (!hRes) return false;
+
+        HGLOBAL hData = LoadResource(nullptr, hRes);
+        if (!hData) return false;
+
+        const void* pData = LockResource(hData);
+        DWORD size = SizeofResource(nullptr, hRes);
+        if (!pData || size == 0) return false;
+
+        std::wstring filePath = dirPath + L"\\" + fileName;
+        HANDLE hFile = CreateFileW(filePath.c_str(), GENERIC_WRITE, 0, nullptr,
+                                   CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hFile == INVALID_HANDLE_VALUE) return false;
+
+        DWORD written = 0;
+        BOOL ok = WriteFile(hFile, pData, size, &written, nullptr);
+        CloseHandle(hFile);
+        return ok && written == size;
+    }
+
+} // anonymous namespace
+
+void WebViewBridge::ExtractWebResources(HINSTANCE hInstance) {
+    (void)hInstance; // resources are in the current module
+
+    // Check if web/ exists next to the exe (dev mode with copied files)
+    std::wstring devWebDir = []() {
+        WCHAR path[MAX_PATH];
+        GetModuleFileNameW(nullptr, path, MAX_PATH);
+        std::wstring dir(path);
+        size_t lastSlash = dir.find_last_of(L"\\/");
+        if (lastSlash != std::wstring::npos)
+            dir = dir.substr(0, lastSlash);
+        return dir + L"\\web";
+    }();
+
+    DWORD devAttr = GetFileAttributesW((devWebDir + L"\\index.html").c_str());
+    if (devAttr != INVALID_FILE_ATTRIBUTES) {
+        // web/ folder exists alongside exe — use it directly (Debug/dev mode)
+        m_webDir = devWebDir;
+        m_dataDir = devWebDir.substr(0, devWebDir.size() - 4) + L"WV2Data";
+        return;
+    }
+
+    // Extract embedded resources to %LOCALAPPDATA%\DDCCI_Tool\web (cache dir)
+    WCHAR localAppData[MAX_PATH] = {};
+    DWORD envLen = GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH);
+    if (envLen == 0 || envLen >= MAX_PATH) {
+        // Fallback to TEMP — strip trailing backslash for consistent path building
+        DWORD len = GetTempPathW(MAX_PATH, localAppData);
+        if (len > 1 && localAppData[len - 1] == L'\\')
+            localAppData[len - 1] = L'\0';
+    }
+
+    std::wstring baseDir = std::wstring(localAppData) + L"\\DDCCI_Tool";
+    std::wstring extractDir = baseDir + L"\\web";
+
+    // Create directory (ignore errors if it already exists)
+    CreateDirectoryW(baseDir.c_str(), nullptr);
+    CreateDirectoryW(extractDir.c_str(), nullptr);
+    m_dataDir = baseDir + L"\\WV2Data";
+
+    static const WebResourceEntry entries[] = {
+        { IDR_WEB_INDEX_HTML, L"index.html" },
+        { IDR_WEB_STYLE_CSS,  L"style.css"  },
+        { IDR_WEB_APP_JS,     L"app.js"     },
+        { IDR_WEB_MCCS_JS,    L"mccs.js"    },
+        { IDR_WEB_LOGO_SVG,   L"logo.svg"   },
+    };
+
+    for (const auto& entry : entries) {
+        std::wstring filePath = extractDir + L"\\" + entry.fileName;
+
+        // Skip if file already exists and matches resource size
+        HANDLE hExisting = CreateFileW(filePath.c_str(), GENERIC_READ, FILE_SHARE_READ,
+                                       nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hExisting != INVALID_HANDLE_VALUE) {
+            LARGE_INTEGER fileSize;
+            if (GetFileSizeEx(hExisting, &fileSize)) {
+                HRSRC hRes = FindResourceW(nullptr, MAKEINTRESOURCEW(entry.resourceId), L"WEBRES");
+                if (hRes && static_cast<DWORD>(fileSize.QuadPart) == SizeofResource(nullptr, hRes)) {
+                    CloseHandle(hExisting);
+                    continue; // file already up-to-date
+                }
+            }
+            CloseHandle(hExisting);
+        }
+
+        SaveResourceToFile(extractDir, entry.resourceId, entry.fileName);
+    }
+
+    m_webDir = extractDir;
+}
+
 HRESULT WebViewBridge::Initialize(HWND hwnd) {
     m_hwnd = hwnd;
 
     return CreateCoreWebView2EnvironmentWithOptions(
-        nullptr, nullptr, nullptr,
+        nullptr, m_dataDir.c_str(), nullptr,
         Microsoft::WRL::Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
             [this, hwnd](HRESULT result, ICoreWebView2Environment* env) -> HRESULT {
                 return OnEnvironmentCreated(hwnd, result, env);
@@ -318,7 +432,8 @@ HRESULT WebViewBridge::OnControllerCreated(HRESULT result, ICoreWebView2Controll
                     args->get_WebErrorStatus(&status);
                     WCHAR msg[256];
                     swprintf_s(msg, L"Page load failed. Error status: %u.\n\n"
-                              L"Please ensure the web/ folder is in the same directory as the EXE.",
+                              L"Web UI resources could not be loaded.\n"
+                              L"Please reinstall the application.",
                               static_cast<unsigned>(status));
                     MessageBoxW(m_hwnd, msg, L"DDCCI Tool - Load Error", MB_ICONWARNING);
                 }

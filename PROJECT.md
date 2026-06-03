@@ -7,7 +7,7 @@ Windows desktop application for reading/writing DDC/CI monitor settings (brightn
 - **Platform**: Windows (x64)
 - **Language**: C++17 + HTML/CSS/JS
 - **Build**: Visual Studio 2022 (Community), MSBuild
-- **UI Runtime**: Microsoft Edge WebView2 (NuGet package)
+- **UI Runtime**: Microsoft Edge WebView2 (NuGet package, statically linked)
 - **Total source**: ~4100 lines across 9 files
 
 ---
@@ -20,7 +20,7 @@ DDCCI_Tool/
 ├── DDCCI_Tool.vcxproj          # MSBuild project
 ├── packages.config             # NuGet: Microsoft.Web.WebView2 1.0.2903.40
 ├── resource.h                  # RC resource IDs
-├── DDCCI_Tool.rc               # Executable metadata (icon, version)
+├── DDCCI_Tool.rc               # Executable metadata (icon, version) + embedded web resources (WEBRES)
 ├── app.ico                     # App icon (6 sizes 16–256, PNG-in-ICO)
 ├── tools/
 │   └── make_icon.py            # Regenerates app.ico from the logo design
@@ -37,7 +37,7 @@ DDCCI_Tool/
     └── app.js                  # Frontend logic, bridge, logging, advanced VCP table  (1092 lines)
 ```
 
-Output: `bin/x64/Debug/DDCCI_Tool.exe` + `web/` + `WebView2Loader.dll`
+Output: `bin/x64/Release/DDCCI_Tool.exe`（单文件，无外部依赖）
 
 ---
 
@@ -108,6 +108,7 @@ WebView2 host + JSON bridge + DDC/CI packet hex computation.
 | Method | Purpose |
 |--------|---------|
 | `Initialize(HWND)` | Creates WebView2 environment + controller, registers `WebMessageReceived` handler |
+| `ExtractWebResources(HINSTANCE)` | Extracts embedded web resources to `%LOCALAPPDATA%\DDCCI_Tool\web\` (or uses `web/` next to exe in dev mode) |
 | `HandleRequest(json)` | Dispatches by `method` field: `enumerateMonitors`, `getCapabilities`, `getVCP`, `setVCP`, `sendRaw` |
 | `BuildMonitorList()` | JSON response with all monitor names |
 | `BuildGetCapabilitiesResponse(i)` | JSON with caps string, supported VCP codes, segmented send/recv hex |
@@ -130,7 +131,7 @@ Standard Win32 entry point:
 1. `WinMain` → registers window class (dark background brush `#1e1e2e`)
 2. Creates window at 960×680
 3. Instantiates `MonitorManager` + `WebViewBridge`
-4. `WM_CREATE` → `bridge.Initialize(hwnd)`
+4. `WM_CREATE` → `bridge.ExtractWebResources()` then `bridge.Initialize(hwnd)`
 5. `WM_SIZE` → `bridge.Resize()`
 6. `WM_DESTROY` → `bridge.Close()`, `PostQuitMessage`
 
@@ -255,9 +256,11 @@ UI 恢复「读回复等待时间(ms)」设置项，其值传到传输层的 `Se
 
 4. **Monitor names all "Generic PnP Monitor"** — `szPhysicalMonitorDescription` is always generic. CCD API (`QueryDisplayConfig`) was tried but index matching between CCD paths and DDC/CI monitors is unreliable. The capabilities `model()` tag is the only correct approach.
 
-5. **~~Code page 936 warning~~（已修复）** — 此前 `WebViewBridge.cpp` 含破折号 `—`（U+2014）在中文区 VS 触发 C4819；已替换为 ASCII `-`。同时 `MonitorManager.cpp` 的 `WriteLog` 改用 `WideCharToMultiByte` 转 UTF-8，消除了 wchar→char 的 C4244 截断警告。源文件保持纯 ASCII 即可，无需 BOM。
+5. **~~Code page 936 warning~~（已修复）** — 已通过 `/utf-8` 编译选项（`AdditionalOptions`）全局解决，源文件保持 UTF-8 无需 BOM。
 
-6. **WebView2 runtime required** — users need the Evergreen WebView2 Runtime installed, or the fixed version DLLs bundled.
+6. **~~WebView2 运行时依赖~~（已解决）** — WebView2Loader 已静态链接（`WebView2LoaderPreference=Static`），无 `WebView2Loader.dll` 输出。WebView2 Runtime（Evergreen）仍需用户安装，缺失时程序会弹出下载链接提示。
+
+7. **WebView2 UserDataFolder 重定向** — `CreateCoreWebView2EnvironmentWithOptions` 的第二个参数指定为 `%LOCALAPPDATA%\DDCCI_Tool\WV2Data`，避免在 exe 旁生成 `DDCCI_Tool.exe.WebView2` 缓存目录。
 
 ---
 
@@ -267,13 +270,30 @@ UI 恢复「读回复等待时间(ms)」设置项，其值传到传输层的 `Se
 # From VS Developer Command Prompt:
 msbuild DDCCI_Tool.sln /t:Build /p:Configuration=Debug /p:Platform=x64
 
+# Release build (single-file output):
+msbuild DDCCI_Tool.sln /t:Rebuild /p:Configuration=Release /p:Platform=x64
+
 # From WSL (path example):
 "/mnt/c/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe" \
   "E:\V3_BAK\work\Code\DDCCI_Tool\DDCCI_Tool.sln" \
-  /t:Build /p:Configuration=Debug /p:Platform=x64
+  /t:Rebuild /p:Configuration=Release /p:Platform=x64
 ```
 
-The post-build step copies `web/` to the output directory (`bin/x64/Debug/web/`).
+### Single-File Packaging
+
+Release 构建输出单个 `DDCCI_Tool.exe`，无外部依赖文件：
+
+| 技术 | 消除的依赖 |
+|------|-----------|
+| `RuntimeLibrary=MultiThreaded` (/MT) | VC++ Redistributable (VCRUNTIME140.dll) |
+| `WebView2LoaderPreference=Static` | WebView2Loader.dll |
+| Win32 RC 自定义资源 (WEBRES) | web/ 文件夹 |
+| `userDataFolder` 重定向 | DDCCI_Tool.exe.WebView2 缓存目录 |
+
+**资源提取策略**：
+- 若 exe 旁存在 `web/index.html` → 直接使用（开发模式，Debug 自动复制）
+- 否则从 exe 内部资源提取到 `%LOCALAPPDATA%\DDCCI_Tool\web\`（带文件大小缓存检测）
+- WebView2 数据目录 → `%LOCALAPPDATA%\DDCCI_Tool\WV2Data\`
 
 ---
 
@@ -292,7 +312,9 @@ The post-build step copies `web/` to the output directory (`bin/x64/Debug/web/`)
 
 1. **~~Release 前移除 debug.log~~（已完成）** — `MonitorManager.cpp` 和 `WebViewBridge.cpp` 中 `WriteLog`/`BridgeLog` 已用 `#ifdef _DEBUG` 包裹，Release 构建不再写入 `debug.log`。DevTools 同样仅在 Debug 启用。
 
-2. **单文件打包发布** — 当前输出依赖 `web/` 文件夹和 `WebView2Loader.dll`。需将 `web/` 资源嵌入 EXE（通过 RC 资源或嵌入字节数组），`WebView2Loader.dll` 需静态链接或一并打包为单文件
+2. **~~单文件打包发布~~（已完成）** — Release 构建输出单个 `DDCCI_Tool.exe`：
+   - CRT 静态链接（/MT），WebView2Loader 静态链接，web 文件嵌入为 RC 资源（WEBRES）
+   - 运行时自动提取到 `%LOCALAPPDATA%\DDCCI_Tool\`，WebView2 数据目录重定向避免 exe 旁生成缓存文件夹
 
 3. **在线检查更新** — 未实现版本更新检测机制。需要：版本号定义、更新服务器 API、下载替换流程、UI 提示。WebView2 已内嵌 Chromium，可直接用 JS `fetch()` 请求更新接口
 
