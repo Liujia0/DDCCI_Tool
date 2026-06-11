@@ -784,6 +784,10 @@
     }
 
     function updateAdvancedVCPRow(code, current, max, valid) {
+        // 获取旧值用于比较
+        var oldData = advancedVCPData[code];
+        var oldCurrent = oldData ? oldData.current : undefined;
+        
         advancedVCPData[code] = { current: current, max: max, valid: valid };
 
         var refs = advancedRows[code];
@@ -811,6 +815,17 @@
         refs.shsl.textContent = padHex4(shslVal) + '(' + shslVal + ')';
         refs.shslBin.textContent = '(' + formatBin16(shslVal) + ')';
         refs.combined.textContent = padHex8(combinedVal) + '(' + combinedVal + ')';
+        
+        // 比较新旧值，若current值变化则标红
+        if (oldCurrent !== undefined && oldCurrent !== current) {
+            refs.shsl.style.color = '#ff4444';
+            refs.shslBin.style.color = '#ff4444';
+            refs.combined.style.color = '#ff4444';
+        } else {
+            refs.shsl.style.color = '';
+            refs.shslBin.style.color = '';
+            refs.combined.style.color = '';
+        }
     }
 
     function queryAllAdvancedVCP(capsMap) {

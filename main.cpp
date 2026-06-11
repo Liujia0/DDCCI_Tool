@@ -8,7 +8,7 @@
 #include "resource.h"
 
 static const wchar_t* WINDOW_CLASS = L"DDCCI_Tool_Window";
-static const wchar_t* WINDOW_TITLE = L"DDCCI Monitor Tool v0.8.2";
+static const wchar_t* WINDOW_TITLE = L"DDCCI Monitor Tool v0.8.3";
 static const int WINDOW_WIDTH  = 1150;
 static const int WINDOW_HEIGHT = 680;
 

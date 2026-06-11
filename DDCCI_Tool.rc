@@ -25,12 +25,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      ""
             VALUE "FileDescription",  "DDCCI Monitor Tool"
-            VALUE "FileVersion",      "0.8.2.0"
+            VALUE "FileVersion",      "0.8.3.0"
             VALUE "InternalName",     "DDCCI_Tool"
             VALUE "LegalCopyright",   ""
             VALUE "OriginalFilename", "DDCCI_Tool.exe"
             VALUE "ProductName",      "DDCCI Monitor Tool"
-            VALUE "ProductVersion",   "0.8.2.0"
+            VALUE "ProductVersion",   "0.8.3.0"
         END
     END
     BLOCK "VarFileInfo"
