@@ -319,6 +319,9 @@
         case 'rawResponse':
             displayRawResponse(data);
             break;
+        case 'appVersion':
+            document.title = 'DDCCI Monitor Tool v' + data.version;
+            break;
 
         default:
             if (data.error) {
@@ -1257,6 +1260,7 @@
                 window.chrome.webview.addEventListener('message', onHostMessage);
             }
             refreshMonitors();
+            sendToHost('getVersion');
         } else {
             setTimeout(init, 50);
         }

@@ -1,5 +1,6 @@
 #include <windows.h>
 #include "resource.h"
+#include "version.h"
 
 IDI_APP_ICON ICON "app.ico"
 
@@ -11,8 +12,8 @@ IDR_WEB_MCCS_JS     WEBRES  "web\\mccs.js"
 IDR_WEB_LOGO_SVG    WEBRES  "web\\logo.svg"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION     0,8,4,0
-PRODUCTVERSION  0,8,4,0
+FILEVERSION     VERSION_COMMA
+PRODUCTVERSION  VERSION_COMMA
 FILEFLAGSMASK   0x3fL
 FILEFLAGS       0x0L
 FILEOS          0x00040004L
@@ -25,12 +26,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      ""
             VALUE "FileDescription",  "DDCCI Monitor Tool"
-            VALUE "FileVersion",      "0.8.4.0"
+            VALUE "FileVersion",      VERSION_DOT4
             VALUE "InternalName",     "DDCCI_Tool"
             VALUE "LegalCopyright",   ""
             VALUE "OriginalFilename", "DDCCI_Tool.exe"
             VALUE "ProductName",      "DDCCI Monitor Tool"
-            VALUE "ProductVersion",   "0.8.4.0"
+            VALUE "ProductVersion",   VERSION_DOT4
         END
     END
     BLOCK "VarFileInfo"

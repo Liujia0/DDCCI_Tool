@@ -1,6 +1,7 @@
 #include "WebViewBridge.h"
 #include "MonitorManager.h"
 #include "resource.h"
+#include "version.h"
 #include <sstream>
 #include <algorithm>
 #include <cwctype>
@@ -565,6 +566,7 @@ std::wstring WebViewBridge::HandleRequest(const std::wstring& json) {
     if (method == L"getDownloadProgress") return HandleGetDownloadProgress();
     if (method == L"applyUpdate")      return HandleApplyUpdate();
     if (method == L"openUrl")          return HandleOpenUrl(json);
+    if (method == L"getVersion")       return L"{\"type\":\"appVersion\",\"version\":\"" VERSION_WDOT L"\"}";
 
     return BuildError(L"Unknown method: " + method);
 }

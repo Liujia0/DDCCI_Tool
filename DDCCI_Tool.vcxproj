@@ -122,6 +122,7 @@
     <ClInclude Include="UpdateChecker.h" />
     <ClInclude Include="WebViewBridge.h" />
     <ClInclude Include="resource.h" />
+    <ClInclude Include="version.h" />
   </ItemGroup>
 
   <ItemGroup>

@@ -6,9 +6,10 @@
 #include "MonitorManager.h"
 #include "WebViewBridge.h"
 #include "resource.h"
+#include "version.h"
 
 static const wchar_t* WINDOW_CLASS = L"DDCCI_Tool_Window";
-static const wchar_t* WINDOW_TITLE = L"DDCCI Monitor Tool v0.8.4";
+static const wchar_t* WINDOW_TITLE = L"DDCCI Monitor Tool v" VERSION_WDOT;
 static const int WINDOW_WIDTH  = 1150;
 static const int WINDOW_HEIGHT = 680;
 
