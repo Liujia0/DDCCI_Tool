@@ -1,12 +1,17 @@
 #include "MonitorManager.h"
 #include <physicalmonitorenumerationapi.h>
 #include <lowlevelmonitorconfigurationapi.h>
+#include <SetupAPI.h>
+#include <devguid.h>
+#include <regstr.h>
 #include <cstdarg>
 #include <cstring>
 #include <cwctype>
+#include <map>
 
 #pragma comment(lib, "dxva2.lib")
 #pragma comment(lib, "user32.lib")
+#pragma comment(lib, "setupapi.lib")
 
 MonitorManager::~MonitorManager() {
     DestroyMonitors();
@@ -21,6 +26,142 @@ void MonitorManager::AddMonitor(HANDLE hPhysicalMonitor, const std::wstring& nam
 
 static void WriteLog(const WCHAR* fmt, ...);
 static void WriteLog(const std::wstring& msg);
+
+// ---- EDID-based monitor name retrieval (aligned with Windows Display Settings) ----
+
+static std::wstring ParseEdidMonitorName(const BYTE* edid, DWORD size) {
+    // EDID must be at least 128 bytes; check header signature
+    if (size < 128) return L"";
+    static const BYTE header[] = {0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00};
+    if (memcmp(edid, header, 8) != 0) return L"";
+
+    // 4 descriptor blocks at bytes 54-71, 72-89, 90-107, 108-125 (18 bytes each)
+    for (int i = 0; i < 4; i++) {
+        const BYTE* desc = edid + 54 + i * 18;
+        // Monitor name descriptor: bytes 0-1 = 0x0000, byte 3 = 0xFC
+        if (desc[0] == 0x00 && desc[1] == 0x00 && desc[3] == 0xFC) {
+            char name[14];
+            memcpy(name, desc + 5, 13);
+            name[13] = '\0';
+            // Strip trailing newline (0x0A) and spaces
+            for (int j = 12; j >= 0; j--) {
+                if (name[j] == '\n' || name[j] == ' ')
+                    name[j] = '\0';
+                else
+                    break;
+            }
+            if (name[0] != '\0') {
+                int wideLen = MultiByteToWideChar(CP_UTF8, 0, name, -1, nullptr, 0);
+                if (wideLen > 0) {
+                    std::wstring result(wideLen - 1, L'\0');
+                    MultiByteToWideChar(CP_UTF8, 0, name, -1, &result[0], wideLen);
+                    return result;
+                }
+            }
+        }
+    }
+    return L"";
+}
+
+// Extract device instance ID from device interface path.
+// Input:  "\\?\DISPLAY#VSCD748#4&35989c15&1&UID4145#{e6f07b5f-...}"
+// Output: "DISPLAY\VSCD748\4&35989c15&1&UID4145"
+static std::wstring ExtractInstanceIdFromDevPath(const std::wstring& devPath) {
+    // Skip "\\?\" prefix
+    size_t start = 0;
+    if (devPath.size() >= 4 && devPath[0] == L'\\' && devPath[1] == L'\\'
+        && devPath[2] == L'?' && devPath[3] == L'\\')
+        start = 4;
+
+    // Find "#{guid}" suffix
+    size_t end = devPath.find(L"#{", start);
+    if (end == std::wstring::npos)
+        end = devPath.size();
+
+    // Extract middle part and convert '#' → '\'
+    std::wstring instanceId = devPath.substr(start, end - start);
+    for (auto& ch : instanceId) {
+        if (ch == L'#') ch = L'\\';
+    }
+    return instanceId;
+}
+
+static std::wstring GetMonitorDevicePath(const WCHAR* adapterDevice, DWORD childIndex) {
+    DISPLAY_DEVICEW monitorDev = {};
+    monitorDev.cb = sizeof(monitorDev);
+    if (!EnumDisplayDevicesW(adapterDevice, childIndex, &monitorDev, EDD_GET_DEVICE_INTERFACE_NAME))
+        return L"";
+    return std::wstring(monitorDev.DeviceID);
+}
+
+// Build map: device-instance-ID (uppercase) → EDID monitor name
+static std::map<std::wstring, std::wstring> BuildEdidNameMap() {
+    std::map<std::wstring, std::wstring> edidMap;
+
+    HDEVINFO devInfo = SetupDiGetClassDevsW(
+        &GUID_DEVCLASS_MONITOR, nullptr, nullptr, DIGCF_PRESENT);
+    if (devInfo == INVALID_HANDLE_VALUE) {
+        WriteLog(L"BuildEdidNameMap: SetupDiGetClassDevs FAILED, err=%u", GetLastError());
+        return edidMap;
+    }
+
+    SP_DEVINFO_DATA devData = {};
+    devData.cbSize = sizeof(SP_DEVINFO_DATA);
+    DWORD totalDevices = 0;
+
+    for (DWORD i = 0; SetupDiEnumDeviceInfo(devInfo, i, &devData); i++) {
+        totalDevices++;
+
+        WCHAR instanceId[512] = {};
+        if (!SetupDiGetDeviceInstanceIdW(devInfo, &devData, instanceId,
+                                          _countof(instanceId), nullptr)) {
+            WriteLog(L"  [%u] SetupDiGetDeviceInstanceId FAILED, err=%u", i, GetLastError());
+            continue;
+        }
+
+        // Read EDID blob from device registry
+        HKEY hKey = SetupDiOpenDevRegKey(devInfo, &devData,
+            DICS_FLAG_GLOBAL, 0, DIREG_DEV, KEY_READ);
+        if (hKey == INVALID_HANDLE_VALUE) {
+            WriteLog(L"  [%u] \"%s\" RegKey FAILED, err=%u", i, instanceId, GetLastError());
+            continue;
+        }
+
+        BYTE edidData[512] = {};
+        DWORD edidSize = sizeof(edidData);
+        DWORD type = 0;
+        LONG regResult = RegQueryValueExW(hKey, L"EDID", nullptr, &type, edidData, &edidSize);
+        RegCloseKey(hKey);
+
+        if (regResult != ERROR_SUCCESS) {
+            WriteLog(L"  [%u] \"%s\" EDID read FAILED, err=%ld", i, instanceId, regResult);
+            continue;
+        }
+        if (type != REG_BINARY || edidSize < 128) {
+            WriteLog(L"  [%u] \"%s\" EDID invalid: type=%u size=%u", i, instanceId, type, edidSize);
+            continue;
+        }
+
+        std::wstring name = ParseEdidMonitorName(edidData, edidSize);
+        if (name.empty()) {
+            WriteLog(L"  [%u] \"%s\" EDID parse: no monitor name descriptor found", i, instanceId);
+            continue;
+        }
+
+        // Store uppercase instance ID → name for case-insensitive matching
+        std::wstring key(instanceId);
+        for (auto& ch : key) ch = towupper(ch);
+        edidMap[key] = name;
+
+        WriteLog(L"  [%u] OK: name=\"%s\" instance=\"%s\"", i, name.c_str(), instanceId);
+    }
+
+    WriteLog(L"BuildEdidNameMap: %u devices enumerated, %zu names mapped", totalDevices, edidMap.size());
+    SetupDiDestroyDeviceInfoList(devInfo);
+    return edidMap;
+}
+
+// ---- Monitor enumeration callback ----
 
 BOOL CALLBACK MonitorEnumProc(HMONITOR hMonitor, HDC, LPRECT, LPARAM dwData) {
     auto* self = reinterpret_cast<MonitorManager*>(dwData);
@@ -50,35 +191,23 @@ BOOL CALLBACK MonitorEnumProc(HMONITOR hMonitor, HDC, LPRECT, LPARAM dwData) {
     }
 
     for (DWORD i = 0; i < count; i++) {
-        // Extract model name from DDC/CI capabilities string (e.g. "model(CU34P2C)")
-        // This is the only reliable way to get the correct monitor name per handle.
+        // Look up monitor name from EDID (aligned with Windows Display Settings)
         std::wstring monitorName = physicalMonitors[i].szPhysicalMonitorDescription;
 
-        DWORD capLen = 0;
-        if (GetCapabilitiesStringLength(physicalMonitors[i].hPhysicalMonitor, &capLen) && capLen > 0) {
-            std::vector<char> capBuf(capLen + 1);
-            if (CapabilitiesRequestAndCapabilitiesReply(physicalMonitors[i].hPhysicalMonitor,
-                    capBuf.data(), static_cast<DWORD>(capBuf.size()))) {
-                capBuf[capLen] = '\0';
-                std::string caps(capBuf.data());
+        std::wstring devPath = GetMonitorDevicePath(mi.szDevice, i);
+        std::wstring instanceId = ExtractInstanceIdFromDevPath(devPath);
+        // Uppercase for case-insensitive matching (SetupAPI returns uppercase)
+        for (auto& ch : instanceId) ch = towupper(ch);
 
-                // Parse model(xxx) from capabilities
-                const char* modelTag = "model(";
-                const char* p = strstr(caps.c_str(), modelTag);
-                if (p) {
-                    p += strlen(modelTag);
-                    const char* end = strchr(p, ')');
-                    if (end && end > p) {
-                        std::string model(p, end - p);
-                        if (!model.empty()) {
-                            int wideLen = MultiByteToWideChar(CP_UTF8, 0, model.c_str(), -1, nullptr, 0);
-                            if (wideLen > 0) {
-                                monitorName.resize(wideLen - 1);
-                                MultiByteToWideChar(CP_UTF8, 0, model.c_str(), -1, &monitorName[0], wideLen);
-                            }
-                        }
-                    }
-                }
+        WriteLog(L"  [%u] instanceId=\"%s\" (adapter=\"%s\")", i, instanceId.c_str(), mi.szDevice);
+
+        if (!instanceId.empty()) {
+            auto it = self->m_edidNameMap.find(instanceId);
+            if (it != self->m_edidNameMap.end()) {
+                monitorName = it->second;
+                WriteLog(L"  [%u] EDID match -> \"%s\"", i, monitorName.c_str());
+            } else {
+                WriteLog(L"  [%u] EDID NO MATCH for instanceId", i);
             }
         }
 
@@ -145,6 +274,19 @@ int MonitorManager::EnumerateMonitors() {
     m_diagLog.clear();
 
     WriteLog(L"=== EnumerateMonitors start ===");
+
+    // Build EDID name map via SetupAPI (aligned with Windows Display Settings)
+    m_edidNameMap = BuildEdidNameMap();
+    WriteLog(L"EDID name map built: %zu entries", m_edidNameMap.size());
+    {
+        WCHAR diagBuf[128];
+        swprintf_s(diagBuf, L"EDID name map: %zu entries", m_edidNameMap.size());
+        m_diagLog.push_back(diagBuf);
+        for (auto& [path, name] : m_edidNameMap) {
+            swprintf_s(diagBuf, L"  EDID: \"%s\" -> path", name.c_str());
+            m_diagLog.push_back(diagBuf);
+        }
+    }
 
     if (!EnumDisplayMonitors(nullptr, nullptr, MonitorEnumProc, reinterpret_cast<LPARAM>(this))) {
         WriteLog(L"EnumDisplayMonitors FAILED, GLE=%u", GetLastError());

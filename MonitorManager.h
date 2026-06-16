@@ -4,6 +4,7 @@
 #include <Windows.h>
 #include <string>
 #include <vector>
+#include <map>
 #include <cstdint>
 
 struct MonitorInfo {
@@ -45,4 +46,5 @@ private:
     void AddMonitor(HANDLE hPhysicalMonitor, const std::wstring& name);
 
     std::vector<MonitorInfo> m_monitors;
+    std::map<std::wstring, std::wstring> m_edidNameMap;  // device path → EDID model name
 };
