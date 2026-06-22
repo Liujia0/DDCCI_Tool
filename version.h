@@ -5,8 +5,8 @@
 //  All other files (rc, cpp, html, js) derive from these three numbers.
 // =============================================================================
 #define VERSION_MAJOR 0
-#define VERSION_MINOR 8
-#define VERSION_PATCH 5
+#define VERSION_MINOR 9
+#define VERSION_PATCH 0
 
 // ---------------------------------------------------------------------------
 //  Derived macros — do NOT edit below this line
