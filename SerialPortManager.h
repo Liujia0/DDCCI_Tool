@@ -37,8 +37,13 @@ private:
     std::vector<SerialPortInfo> EnumerateI2CDevPorts();
     bool OpenI2CDevPort(const std::wstring& portName, DWORD baudRate);
     bool DDCSendRawI2CDev(const std::vector<uint8_t>& txBody, std::vector<uint8_t>& rxData, std::string& error);
+    bool DDCSendRawI2CDevWriteReadRestart(const std::vector<uint8_t>& txPacket, std::vector<uint8_t>& rxData, std::string& error);
+    bool DDCSendRawI2CDevWriteThenRead(const std::vector<uint8_t>& txPacket, std::vector<uint8_t>& rxData, std::string& error);
+    bool DDCSendRawI2CDevWriteThenAutoRead(const std::vector<uint8_t>& txPacket, std::vector<uint8_t>& rxData, std::string& error);
     bool ExtractFirstValidDDCReply(const std::vector<uint8_t>& rawData, std::vector<uint8_t>& packet, std::string& reason) const;
     bool IsValidDDCReply(const std::vector<uint8_t>& packet, std::string& reason) const;
+    bool IsRestartPreferredDevice() const;
+    bool IsAutoReadPreferredDevice() const;
 
     std::wstring m_deviceName;
 };

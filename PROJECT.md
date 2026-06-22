@@ -149,13 +149,15 @@ Raw DDC/CI transport over embedded `i2c_dev.dll`.
 |--------|---------|
 | `LoadI2CDev(path)` | Dynamically loads `i2c_dev.dll` from dev/output/extracted path |
 | `EnumeratePorts()` | Calls `i2c_driver_scan` + `i2c_driver_get_scan_result` and exposes devices as `i2cdev:...` |
-| `OpenPort(portName)` | Opens selected raw-I2C backend device and applies speed/bulk settings |
-| `DDCSendRaw(txBody, rxData, error)` | Writes DDC request body, waits 70ms, reads reply via `i2c_driver_read`, extracts first valid DDC frame |
+| `OpenPort(portName)` | Opens selected raw-I2C backend device; for unsupported GPU backends, speed/bulk configuration failures are treated as non-fatal capability gaps |
+| `DDCSendRaw(txBody, rxData, error)` | Chooses backend-specific raw DDC flow (`write_read_restart`, `read_ddcci_auto`, or `write` + `read`) and extracts the first valid DDC frame |
 
 Current implementation details:
 
 - Only `i2c_dev.dll` is used; legacy `ftd2xx.dll` / D2XX / MPSSE code has been removed.
 - UI/log 层显示的请求包格式是 `6E 51 [0x80|len] [body...] [chk]`；实际写入 `i2c_dev` 的缓冲区不包含首字节 `0x6E`，而是将 `51 [0x80|len] [body...] [chk]` 发送到 7-bit I2C 地址 `0x37`。
+- `SerialPortManager` now distinguishes adapter families by scan name and selects a transport strategy accordingly: GPU-class backends (IGCL / ADL / NVAPI) prefer `i2c_driver_write_read_restart`, IGCL-class devices may additionally fall back to `i2c_driver_read_ddcci_auto`, and FTDI-class adapters continue using `write -> Sleep(70ms) -> read`.
+- On GPU-class backends, `i2c_driver_set_speed` / `i2c_driver_set_enable_bulk` may report `Not Support`; these are treated as backend capability limitations rather than open failures.
 - Some `i2c_dev` backends return a repeated packet pattern across the whole read buffer; `SerialPortManager` now trims this to the first valid DDC/CI frame.
 - Raw reply checksum validation accepts both the traditional `0x6F` seed and the observed `0x50` seed seen on the current `i2c_dev` FTDI-class path.
 
@@ -262,14 +264,16 @@ The project now has an implemented raw DDC/CI path instead of only documenting i
 
 - `dxva2` remains the default high-level path for system monitor control (`MonitorManager`)
 - `i2c_dev.dll` is the current low-level raw-I2C transport (`SerialPortManager`)
-- The raw path has been verified with `i2c_dev` scan/open/write/read flows on FTDI-class adapters and successfully reads real DDC/CI replies
+- The raw path has been verified with `i2c_dev` on FTDI-class adapters, Intel IGCL backends, and AMD ADL backends
+- NVIDIA / NVAPI-class backends have been wired to the same restart-preferred strategy but still require real-machine validation
 - The old hand-written FTDI D2XX / MPSSE experiment is no longer part of the project
 
 Current raw transport characteristics:
 
 - Runtime device discovery comes from `i2c_driver_scan`
-- Supported scan results may include IGCL and FTDI-class devices in the same list
-- Raw DDC flow is `scan -> open -> set speed(100000) -> disable bulk -> write request -> Sleep(70ms) -> read reply`
+- Supported scan results may include IGCL, ADL, NVAPI, and FTDI-class devices in the same list
+- Open flow is `scan -> open -> optional speed/bulk config`, where unsupported capability-setting calls are ignored for GPU-class backends
+- Preferred DDC flow for GPU-class backends is `write_read_restart`; Intel IGCL may additionally use `read_ddcci_auto`, while FTDI-class adapters use `write request -> Sleep(70ms) -> read reply`
 - Returned buffers may contain repeated reply frames; code trims to the first valid frame before parsing
 
 ---
@@ -293,6 +297,8 @@ Current raw transport characteristics:
 8. **`i2c_dev` 扫描结果顺序不固定** — `i2c_driver_scan` 返回的设备顺序可能在不同机器或不同运行间变化，前端应基于 `portName` 选择目标设备，而不是假设固定索引。
 
 9. **`i2c_dev` 读缓冲行为并不总是精确长度返回** — 某些设备会把同一帧 DDC 回复重复填满整个读缓冲，`SerialPortManager` 已在本项目内裁剪首个有效包后再交给上层。
+
+10. **GPU 后端并不统一支持 speed/bulk 配置接口** — IGCL / ADL / NVAPI 这类通过显卡驱动暴露的 I2C/AUX 后端，`i2c_driver_set_speed` 或 `i2c_driver_set_enable_bulk` 可能返回 `Not Support`。当前实现已将其视为“能力不支持”而不是“设备打开失败”。
 
 ---
 

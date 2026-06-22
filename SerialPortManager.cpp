@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdarg>
+#include <cwctype>
 #include <cstdio>
 #include <vector>
 
@@ -20,7 +21,9 @@ using PFN_i2c_driver_close = void (*)(I2CDEV_PTR handle);
 using PFN_i2c_driver_set_speed = bool (*)(I2CDEV_PTR handle, uint32_t speed);
 using PFN_i2c_driver_set_enable_bulk = bool (*)(I2CDEV_PTR handle, bool enable);
 using PFN_i2c_driver_read = bool (*)(I2CDEV_PTR handle, uint8_t addr, uint8_t* buf, intptr_t* len);
+using PFN_i2c_driver_read_ddcci_auto = bool (*)(I2CDEV_PTR handle, uint8_t addr, uint8_t* buf, uint8_t* len);
 using PFN_i2c_driver_write = bool (*)(I2CDEV_PTR handle, uint8_t addr, uint8_t* buf, intptr_t* len);
+using PFN_i2c_driver_write_read_restart = bool (*)(I2CDEV_PTR handle, uint8_t addr, uint8_t* writeBuf, intptr_t* writeLen, intptr_t* readLen, uint8_t* readBuf);
 
 HMODULE g_i2cDevModule = nullptr;
 I2CDEV_PTR g_i2cDevContext = nullptr;
@@ -35,7 +38,9 @@ PFN_i2c_driver_close g_i2c_driver_close = nullptr;
 PFN_i2c_driver_set_speed g_i2c_driver_set_speed = nullptr;
 PFN_i2c_driver_set_enable_bulk g_i2c_driver_set_enable_bulk = nullptr;
 PFN_i2c_driver_read g_i2c_driver_read = nullptr;
+PFN_i2c_driver_read_ddcci_auto g_i2c_driver_read_ddcci_auto = nullptr;
 PFN_i2c_driver_write g_i2c_driver_write = nullptr;
+PFN_i2c_driver_write_read_restart g_i2c_driver_write_read_restart = nullptr;
 
 constexpr uint8_t I2C_DEV_MAGIC[256] = {
     0x07, 0x06, 0x1C, 0x16, 0x55, 0x55, 0x48, 0x64, 0x7B, 0x62, 0x66, 0x7B, 0x65, 0x75, 0x7D, 0x36,
@@ -185,6 +190,24 @@ std::wstring StripI2CDevPrefix(const std::wstring& portName) {
     return portName;
 }
 
+bool ContainsNoCase(const std::wstring& text, const wchar_t* needle) {
+    if (!needle || !*needle) {
+        return false;
+    }
+
+    std::wstring haystack = text;
+    std::wstring probe = needle;
+    std::transform(haystack.begin(), haystack.end(), haystack.begin(), towlower);
+    std::transform(probe.begin(), probe.end(), probe.begin(), towlower);
+    return haystack.find(probe) != std::wstring::npos;
+}
+
+bool IsNonFatalCapabilityError(const std::wstring& errorText) {
+    return ContainsNoCase(errorText, L"not support") ||
+           ContainsNoCase(errorText, L"not supported") ||
+           ContainsNoCase(errorText, L"unsupported");
+}
+
 bool IsValidDDCChecksum(const std::vector<uint8_t>& packet, uint8_t* matchedSeed = nullptr) {
     if (packet.size() < 2) {
         return false;
@@ -231,7 +254,9 @@ bool SerialPortManager::LoadI2CDev(const std::wstring& dllPath) {
     RESOLVE_I2C_DEV(i2c_driver_set_speed);
     RESOLVE_I2C_DEV(i2c_driver_set_enable_bulk);
     RESOLVE_I2C_DEV(i2c_driver_read);
+    RESOLVE_I2C_DEV(i2c_driver_read_ddcci_auto);
     RESOLVE_I2C_DEV(i2c_driver_write);
+    RESOLVE_I2C_DEV(i2c_driver_write_read_restart);
 #undef RESOLVE_I2C_DEV
 
     if (!g_i2c_driver_init || !g_i2c_driver_scan || !g_i2c_driver_get_scan_result ||
@@ -252,7 +277,9 @@ bool SerialPortManager::LoadI2CDev(const std::wstring& dllPath) {
         g_i2c_driver_set_speed = nullptr;
         g_i2c_driver_set_enable_bulk = nullptr;
         g_i2c_driver_read = nullptr;
+        g_i2c_driver_read_ddcci_auto = nullptr;
         g_i2c_driver_write = nullptr;
+        g_i2c_driver_write_read_restart = nullptr;
         return false;
     }
 
@@ -336,6 +363,16 @@ bool SerialPortManager::OpenI2CDevPort(const std::wstring& portName, DWORD baudR
     }
 
     const std::wstring deviceName = StripI2CDevPrefix(portName);
+    const bool isVendorGpuBackend = ContainsNoCase(deviceName, L"igcl") ||
+                                    ContainsNoCase(deviceName, L"intel") ||
+                                    ContainsNoCase(deviceName, L"igfxext") ||
+                                    ContainsNoCase(deviceName, L"adl") ||
+                                    ContainsNoCase(deviceName, L"adlx") ||
+                                    ContainsNoCase(deviceName, L"amd") ||
+                                    ContainsNoCase(deviceName, L"radeon") ||
+                                    ContainsNoCase(deviceName, L"nvapi") ||
+                                    ContainsNoCase(deviceName, L"nvidia") ||
+                                    ContainsNoCase(deviceName, L"geforce");
     const std::string deviceNameAnsi = WideToAnsi(deviceName);
     if (deviceNameAnsi.empty()) {
         SPM_WriteLog(L"OpenI2CDevPort: empty device name after conversion");
@@ -350,17 +387,29 @@ bool SerialPortManager::OpenI2CDevPort(const std::wstring& portName, DWORD baudR
 
     uint32_t speed = (baudRate > 0 && baudRate <= 1000) ? (1000u / baudRate) : 100000u;
     if (!g_i2c_driver_set_speed(g_i2cDevContext, speed)) {
-        SPM_WriteLog(L"OpenI2CDevPort: i2c_driver_set_speed(%u) failed: %s",
-                     speed, GetI2CDevLastErrorText().c_str());
-        g_i2c_driver_close(g_i2cDevContext);
-        return false;
+        const std::wstring speedError = GetI2CDevLastErrorText();
+        if (isVendorGpuBackend && IsNonFatalCapabilityError(speedError)) {
+            SPM_WriteLog(L"OpenI2CDevPort: i2c_driver_set_speed(%u) unsupported for %s, continue without speed config",
+                         speed, deviceName.c_str());
+        } else {
+            SPM_WriteLog(L"OpenI2CDevPort: i2c_driver_set_speed(%u) failed: %s",
+                         speed, speedError.c_str());
+            g_i2c_driver_close(g_i2cDevContext);
+            return false;
+        }
     }
 
     if (!g_i2c_driver_set_enable_bulk(g_i2cDevContext, false)) {
-        SPM_WriteLog(L"OpenI2CDevPort: i2c_driver_set_enable_bulk(false) failed: %s",
-                     GetI2CDevLastErrorText().c_str());
-        g_i2c_driver_close(g_i2cDevContext);
-        return false;
+        const std::wstring bulkError = GetI2CDevLastErrorText();
+        if (isVendorGpuBackend && IsNonFatalCapabilityError(bulkError)) {
+            SPM_WriteLog(L"OpenI2CDevPort: i2c_driver_set_enable_bulk(false) unsupported for %s, continue without bulk config",
+                         deviceName.c_str());
+        } else {
+            SPM_WriteLog(L"OpenI2CDevPort: i2c_driver_set_enable_bulk(false) failed: %s",
+                         bulkError.c_str());
+            g_i2c_driver_close(g_i2cDevContext);
+            return false;
+        }
     }
 
     m_deviceName = portName;
@@ -388,6 +437,27 @@ bool SerialPortManager::IsOpen() const {
 
 std::wstring SerialPortManager::GetOpenPortName() const {
     return m_deviceName;
+}
+
+bool SerialPortManager::IsRestartPreferredDevice() const {
+    const std::wstring deviceName = StripI2CDevPrefix(m_deviceName);
+    return ContainsNoCase(deviceName, L"igcl") ||
+           ContainsNoCase(deviceName, L"adl") ||
+           ContainsNoCase(deviceName, L"adlx") ||
+           ContainsNoCase(deviceName, L"nvapi") ||
+           ContainsNoCase(deviceName, L"intel") ||
+           ContainsNoCase(deviceName, L"amd") ||
+           ContainsNoCase(deviceName, L"radeon") ||
+           ContainsNoCase(deviceName, L"nvidia") ||
+           ContainsNoCase(deviceName, L"geforce") ||
+           ContainsNoCase(deviceName, L"igfxext");
+}
+
+bool SerialPortManager::IsAutoReadPreferredDevice() const {
+    const std::wstring deviceName = StripI2CDevPrefix(m_deviceName);
+    return ContainsNoCase(deviceName, L"igcl") ||
+           ContainsNoCase(deviceName, L"intel") ||
+           ContainsNoCase(deviceName, L"igfxext");
 }
 
 bool SerialPortManager::IsValidDDCReply(const std::vector<uint8_t>& packet, std::string& reason) const {
@@ -476,6 +546,150 @@ bool SerialPortManager::ExtractFirstValidDDCReply(const std::vector<uint8_t>& ra
     return false;
 }
 
+bool SerialPortManager::DDCSendRawI2CDevWriteReadRestart(const std::vector<uint8_t>& txPacket,
+                                                         std::vector<uint8_t>& rxData,
+                                                         std::string& error) {
+    if (!g_i2c_driver_write_read_restart) {
+        error = "i2c_driver_write_read_restart unavailable";
+        return false;
+    }
+
+    std::vector<uint8_t> readBuf(512, 0);
+    intptr_t txLen = static_cast<intptr_t>(txPacket.size());
+    intptr_t rxLen = static_cast<intptr_t>(readBuf.size());
+
+    SPM_WriteLog(L"DDCSendRawI2CDev[restart]: addr=0x%02X txLen=%lld rxCap=%lld data=[%s]",
+                 DDC_7BIT_ADDR,
+                 static_cast<long long>(txLen),
+                 static_cast<long long>(rxLen),
+                 BytesToHex(txPacket).c_str());
+
+    if (!g_i2c_driver_write_read_restart(g_i2cDevContext, DDC_7BIT_ADDR, const_cast<uint8_t*>(txPacket.data()),
+                                         &txLen, &rxLen, readBuf.data())) {
+        SPM_WriteLog(L"DDCSendRawI2CDev[restart]: failed, err=%s", GetI2CDevLastErrorText().c_str());
+        error = "i2c_driver_write_read_restart failed";
+        return false;
+    }
+
+    SPM_WriteLog(L"DDCSendRawI2CDev[restart]: ok txLen=%lld rxLen=%lld",
+                 static_cast<long long>(txLen), static_cast<long long>(rxLen));
+    if (rxLen <= 0) {
+        error = "i2c_driver_write_read_restart returned no data";
+        return false;
+    }
+    if (rxLen > static_cast<intptr_t>(readBuf.size())) {
+        rxLen = static_cast<intptr_t>(readBuf.size());
+    }
+
+    std::vector<uint8_t> rawData(readBuf.begin(), readBuf.begin() + static_cast<size_t>(rxLen));
+    if (!ExtractFirstValidDDCReply(rawData, rxData, error)) {
+        SPM_WriteLog(L"DDCSendRawI2CDev[restart]: invalid reply: %S raw=[%s]",
+                     error.c_str(), BytesToHex(rawData).c_str());
+        return false;
+    }
+
+    SPM_WriteLog(L"DDCSendRawI2CDev[restart]: read ok len=%zu raw=[%s]",
+                 rxData.size(), BytesToHex(rxData).c_str());
+    return true;
+}
+
+bool SerialPortManager::DDCSendRawI2CDevWriteThenRead(const std::vector<uint8_t>& txPacket,
+                                                      std::vector<uint8_t>& rxData,
+                                                      std::string& error) {
+    intptr_t txLen = static_cast<intptr_t>(txPacket.size());
+    SPM_WriteLog(L"DDCSendRawI2CDev[write/read]: write addr=0x%02X len=%lld data=[%s]",
+                 DDC_7BIT_ADDR, static_cast<long long>(txLen), BytesToHex(txPacket).c_str());
+    if (!g_i2c_driver_write(g_i2cDevContext, DDC_7BIT_ADDR, const_cast<uint8_t*>(txPacket.data()), &txLen)) {
+        SPM_WriteLog(L"DDCSendRawI2CDev[write/read]: i2c_driver_write failed, err=%s",
+                     GetI2CDevLastErrorText().c_str());
+        error = "i2c_driver_write failed";
+        return false;
+    }
+
+    SPM_WriteLog(L"DDCSendRawI2CDev[write/read]: write ok, transferred=%lld", static_cast<long long>(txLen));
+    Sleep(DDC_REPLY_DELAY_MS);
+
+    std::vector<uint8_t> readBuf(512, 0);
+    intptr_t rxLen = static_cast<intptr_t>(readBuf.size());
+    SPM_WriteLog(L"DDCSendRawI2CDev[write/read]: read addr=0x%02X requestCapacity=%lld",
+                 DDC_7BIT_ADDR, static_cast<long long>(rxLen));
+    if (!g_i2c_driver_read(g_i2cDevContext, DDC_7BIT_ADDR, readBuf.data(), &rxLen)) {
+        SPM_WriteLog(L"DDCSendRawI2CDev[write/read]: i2c_driver_read failed, err=%s",
+                     GetI2CDevLastErrorText().c_str());
+        error = "i2c_driver_read failed";
+        return false;
+    }
+
+    SPM_WriteLog(L"DDCSendRawI2CDev[write/read]: read returned result=1 rxLen=%lld",
+                 static_cast<long long>(rxLen));
+    if (rxLen <= 0) {
+        error = "i2c_driver_read returned no data";
+        return false;
+    }
+    if (rxLen > static_cast<intptr_t>(readBuf.size())) {
+        rxLen = static_cast<intptr_t>(readBuf.size());
+    }
+
+    std::vector<uint8_t> rawData(readBuf.begin(), readBuf.begin() + static_cast<size_t>(rxLen));
+    if (!ExtractFirstValidDDCReply(rawData, rxData, error)) {
+        SPM_WriteLog(L"DDCSendRawI2CDev[write/read]: invalid reply: %S raw=[%s]",
+                     error.c_str(), BytesToHex(rawData).c_str());
+        return false;
+    }
+
+    SPM_WriteLog(L"DDCSendRawI2CDev[write/read]: read ok len=%zu raw=[%s]",
+                 rxData.size(), BytesToHex(rxData).c_str());
+    return true;
+}
+
+bool SerialPortManager::DDCSendRawI2CDevWriteThenAutoRead(const std::vector<uint8_t>& txPacket,
+                                                          std::vector<uint8_t>& rxData,
+                                                          std::string& error) {
+    if (!g_i2c_driver_read_ddcci_auto) {
+        error = "i2c_driver_read_ddcci_auto unavailable";
+        return false;
+    }
+
+    intptr_t txLen = static_cast<intptr_t>(txPacket.size());
+    SPM_WriteLog(L"DDCSendRawI2CDev[auto-read]: write addr=0x%02X len=%lld data=[%s]",
+                 DDC_7BIT_ADDR, static_cast<long long>(txLen), BytesToHex(txPacket).c_str());
+    if (!g_i2c_driver_write(g_i2cDevContext, DDC_7BIT_ADDR, const_cast<uint8_t*>(txPacket.data()), &txLen)) {
+        SPM_WriteLog(L"DDCSendRawI2CDev[auto-read]: i2c_driver_write failed, err=%s",
+                     GetI2CDevLastErrorText().c_str());
+        error = "i2c_driver_write failed";
+        return false;
+    }
+
+    std::vector<uint8_t> readBuf(255, 0);
+    uint8_t rxLen = static_cast<uint8_t>(readBuf.size());
+    SPM_WriteLog(L"DDCSendRawI2CDev[auto-read]: read_ddcci_auto addr=0x%02X requestCapacity=%u",
+                 DDC_7BIT_ADDR, static_cast<unsigned>(rxLen));
+    if (!g_i2c_driver_read_ddcci_auto(g_i2cDevContext, DDC_7BIT_ADDR, readBuf.data(), &rxLen)) {
+        SPM_WriteLog(L"DDCSendRawI2CDev[auto-read]: i2c_driver_read_ddcci_auto failed, err=%s",
+                     GetI2CDevLastErrorText().c_str());
+        error = "i2c_driver_read_ddcci_auto failed";
+        return false;
+    }
+
+    SPM_WriteLog(L"DDCSendRawI2CDev[auto-read]: read returned result=1 rxLen=%u",
+                 static_cast<unsigned>(rxLen));
+    if (rxLen == 0) {
+        error = "i2c_driver_read_ddcci_auto returned no data";
+        return false;
+    }
+
+    std::vector<uint8_t> rawData(readBuf.begin(), readBuf.begin() + static_cast<size_t>(rxLen));
+    if (!ExtractFirstValidDDCReply(rawData, rxData, error)) {
+        SPM_WriteLog(L"DDCSendRawI2CDev[auto-read]: invalid reply: %S raw=[%s]",
+                     error.c_str(), BytesToHex(rawData).c_str());
+        return false;
+    }
+
+    SPM_WriteLog(L"DDCSendRawI2CDev[auto-read]: read ok len=%zu raw=[%s]",
+                 rxData.size(), BytesToHex(rxData).c_str());
+    return true;
+}
+
 bool SerialPortManager::DDCSendRawI2CDev(const std::vector<uint8_t>& txBody,
                                          std::vector<uint8_t>& rxData,
                                          std::string& error) {
@@ -497,45 +711,26 @@ bool SerialPortManager::DDCSendRawI2CDev(const std::vector<uint8_t>& txBody,
     txPacket.insert(txPacket.end(), txBody.begin(), txBody.end());
     txPacket.push_back(checksum);
 
-    intptr_t txLen = static_cast<intptr_t>(txPacket.size());
-    SPM_WriteLog(L"DDCSendRawI2CDev: write addr=0x%02X len=%lld data=[%s]",
-                 DDC_7BIT_ADDR, static_cast<long long>(txLen), BytesToHex(txPacket).c_str());
-    if (!g_i2c_driver_write(g_i2cDevContext, DDC_7BIT_ADDR, txPacket.data(), &txLen)) {
-        SPM_WriteLog(L"DDCSendRawI2CDev: i2c_driver_write failed, err=%s", GetI2CDevLastErrorText().c_str());
-        error = "i2c_driver_write failed";
-        return false;
+    const bool preferRestartPath = IsRestartPreferredDevice();
+    const bool preferAutoReadPath = IsAutoReadPreferredDevice();
+    if (preferRestartPath) {
+        SPM_WriteLog(L"DDCSendRawI2CDev: using restart-preferred path for %s", StripI2CDevPrefix(m_deviceName).c_str());
+        if (DDCSendRawI2CDevWriteReadRestart(txPacket, rxData, error)) {
+            return true;
+        }
+        SPM_WriteLog(L"DDCSendRawI2CDev: write_read_restart failed, fallback to alternate read path. err=%S",
+                     error.c_str());
+
+        if (preferAutoReadPath) {
+            std::string autoReadError;
+            if (DDCSendRawI2CDevWriteThenAutoRead(txPacket, rxData, autoReadError)) {
+                return true;
+            }
+            SPM_WriteLog(L"DDCSendRawI2CDev: auto-read fallback failed, err=%S", autoReadError.c_str());
+        }
     }
 
-    SPM_WriteLog(L"DDCSendRawI2CDev: write ok, transferred=%lld", static_cast<long long>(txLen));
-    Sleep(DDC_REPLY_DELAY_MS);
-
-    std::vector<uint8_t> readBuf(512, 0);
-    intptr_t rxLen = static_cast<intptr_t>(readBuf.size());
-    SPM_WriteLog(L"DDCSendRawI2CDev: read addr=0x%02X requestCapacity=%lld",
-                 DDC_7BIT_ADDR, static_cast<long long>(rxLen));
-    if (!g_i2c_driver_read(g_i2cDevContext, DDC_7BIT_ADDR, readBuf.data(), &rxLen)) {
-        SPM_WriteLog(L"DDCSendRawI2CDev: i2c_driver_read failed, err=%s", GetI2CDevLastErrorText().c_str());
-        error = "i2c_driver_read failed";
-        return false;
-    }
-
-    SPM_WriteLog(L"DDCSendRawI2CDev: read returned result=1 rxLen=%lld", static_cast<long long>(rxLen));
-    if (rxLen <= 0) {
-        error = "i2c_driver_read returned no data";
-        return false;
-    }
-    if (rxLen > static_cast<intptr_t>(readBuf.size())) {
-        rxLen = static_cast<intptr_t>(readBuf.size());
-    }
-
-    std::vector<uint8_t> rawData(readBuf.begin(), readBuf.begin() + static_cast<size_t>(rxLen));
-    if (!ExtractFirstValidDDCReply(rawData, rxData, error)) {
-        SPM_WriteLog(L"DDCSendRawI2CDev: invalid reply: %S raw=[%s]", error.c_str(), BytesToHex(rawData).c_str());
-        return false;
-    }
-
-    SPM_WriteLog(L"DDCSendRawI2CDev: read ok len=%zu raw=[%s]", rxData.size(), BytesToHex(rxData).c_str());
-    return true;
+    return DDCSendRawI2CDevWriteThenRead(txPacket, rxData, error);
 }
 
 bool SerialPortManager::DDCSendRaw(const std::vector<uint8_t>& txBody,
