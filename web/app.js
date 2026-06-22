@@ -22,6 +22,7 @@
     // ---- State ----
 
     var monitors = [];
+    var serialPorts = [];
     var activeMonitorIndex = -1;
     var currentCapsMap = {};   // {vcpCode: [subValues]} parsed from capabilities
     var advancedVCPData = {};  // {code: {current, max, valid}}
@@ -96,12 +97,15 @@
     // responses can be matched to their pending send.
     function typeToMethod(type) {
         switch (type) {
-        case 'monitorList':   return 'enumerateMonitors';
-        case 'vcpFeature':    return 'getVCP';
-        case 'vcpSet':        return 'setVCP';
-        case 'capabilities':  return 'getCapabilities';
-        case 'rawResponse':   return 'sendRaw';
-        default:              return type;
+        case 'monitorList':       return 'enumerateMonitors';
+        case 'vcpFeature':        return 'getVCP';
+        case 'vcpSet':            return 'setVCP';
+        case 'capabilities':      return 'getCapabilities';
+        case 'rawResponse':       return 'sendRaw';
+        case 'serialPortList':    return 'enumerateSerialPorts';
+        case 'serialRawResponse': return 'sendSerialRaw';
+        case 'serialPortOpened':  return 'openSerialPort';
+        default:                  return type;
         }
     }
 
@@ -168,8 +172,14 @@
             if (method === 'setVCP') label += ' = ' + params.value;
         } else if (method === 'enumerateMonitors') {
             label = 'Scan monitors';
+        } else if (method === 'enumerateSerialPorts') {
+            label = 'Scan serial ports';
         } else if (method === 'getCapabilities') {
             label = 'Monitor ' + params.monitor;
+        } else if (method === 'openSerialPort') {
+            label = 'Open ' + (params.portName || '');
+        } else if (method === 'sendSerialRaw') {
+            label = 'Serial RAW ' + (params.portName || '');
         }
         var rec = {
             op: method,
@@ -188,6 +198,8 @@
         var detail = '';
         if (data.type === 'monitorList') {
             detail = (data.monitors ? data.monitors.length : 0) + ' monitor(s)';
+        } else if (data.type === 'serialPortList') {
+            detail = (data.serialPorts ? data.serialPorts.length : 0) + ' serial port(s)';
         } else if (data.type === 'vcpFeature') {
             if (data.valid === false) {
                 detail = vcpLabel(data.vcpCode) + ' = <read failed>';
@@ -236,6 +248,30 @@
         }
     }
 
+    function isSerialMode() {
+        return activeMonitorIndex >= 100;
+    }
+
+    function disableTab(tabName, disabled) {
+        var btn = document.querySelector('.tab-btn[data-tab="' + tabName + '"]');
+        if (btn) {
+            btn.disabled = disabled;
+            btn.classList.toggle('tab-disabled', disabled);
+        }
+    }
+
+    function switchToTab(tabName) {
+        var allBtns = document.querySelectorAll('.tab-btn');
+        for (var b = 0; b < allBtns.length; b++) {
+            allBtns[b].classList.toggle('active', allBtns[b].dataset.tab === tabName);
+        }
+        tabControls.classList.toggle('hidden', tabName !== 'controls');
+        tabAdvanced.classList.toggle('hidden', tabName !== 'advanced');
+        tabLog.classList.toggle('hidden', tabName !== 'log');
+        tabRaw.classList.toggle('hidden', tabName !== 'raw');
+        if (tabName === 'raw') computeTxHex();
+    }
+
     function onHostMessage(event) {
         var data;
         try {
@@ -256,7 +292,14 @@
             // Keep the scan animation up briefly so it reads as a real scan
             // rather than a flicker on machines that enumerate instantly.
             setTimeout(hideScanOverlay, 450);
-            if (activeMonitorIndex >= monitors.length) {
+            if (activeMonitorIndex >= 100) {
+                // Serial port selected — re-select only if still in list
+                if (activeMonitorIndex - 100 >= serialPorts.length) {
+                    selectMonitor(-1);
+                } else {
+                    selectMonitor(activeMonitorIndex);
+                }
+            } else if (activeMonitorIndex >= 0 && activeMonitorIndex >= monitors.length) {
                 selectMonitor(-1);
             } else if (activeMonitorIndex >= 0) {
                 selectMonitor(activeMonitorIndex);
@@ -318,6 +361,21 @@
 
         case 'rawResponse':
             displayRawResponse(data);
+            break;
+        case 'serialPortList':
+            serialPorts = data.serialPorts || [];
+            renderMonitorList();
+            setTimeout(hideScanOverlay, 450);
+            // Validate active serial port still exists after refresh
+            if (activeMonitorIndex >= 100 && (activeMonitorIndex - 100) >= serialPorts.length) {
+                selectMonitor(-1);
+            }
+            break;
+        case 'serialRawResponse':
+            displayRawResponse(data);
+            break;
+        case 'serialPortOpened':
+            setStatus('Serial port opened: ' + (data.portName || ''));
             break;
         case 'appVersion':
             document.title = 'DDCCI Monitor Tool v' + data.version;
@@ -878,7 +936,7 @@
 
     btnRawSend.addEventListener('click', function () {
         if (activeMonitorIndex < 0) {
-            rawResponse.innerHTML = '<span class="raw-resp-error">No monitor selected</span>';
+            rawResponse.innerHTML = '<span class="raw-resp-error">No device selected</span>';
             return;
         }
         var body = computeTxHex();
@@ -887,7 +945,16 @@
             return;
         }
         rawResponse.innerHTML = '<span class="raw-placeholder">Sending...</span>';
-        sendToHost('sendRaw', { monitor: activeMonitorIndex, bodyHex: rawHexInput.value.trim() });
+
+        if (isSerialMode()) {
+            var mon = serialPorts[activeMonitorIndex - 100];
+            sendToHost('sendSerialRaw', {
+                portName: mon.portName,
+                bodyHex: rawHexInput.value.trim()
+            });
+        } else {
+            sendToHost('sendRaw', { monitor: activeMonitorIndex, bodyHex: rawHexInput.value.trim() });
+        }
     });
 
     function displayRawResponse(data) {
@@ -959,15 +1026,16 @@
         activeMonitorIndex = -1;
         showScanOverlay();
         sendToHost('enumerateMonitors');
-        setStatus('Scanning monitors...');
+        sendToHost('enumerateSerialPorts');
+        setStatus('Scanning devices...');
     }
 
     function renderMonitorList() {
         monitorListEl.innerHTML = '';
-        if (monitors.length === 0) {
+        if (monitors.length === 0 && serialPorts.length === 0) {
             var li = document.createElement('li');
             li.className = 'monitor-item empty';
-            li.textContent = 'No monitors detected';
+            li.textContent = 'No devices detected';
             monitorListEl.appendChild(li);
             return;
         }
@@ -975,7 +1043,7 @@
         for (var i = 0; i < monitors.length; i++) {
             var li = document.createElement('li');
             li.className = 'monitor-item';
-            li.textContent = monitors[i].name;
+            li.textContent = '\uD83D\uDCFA ' + monitors[i].name;
             li.dataset.index = i;
             li.addEventListener('click', (function (idx) {
                 return function () { selectMonitor(idx); };
@@ -984,6 +1052,33 @@
                 li.classList.add('active');
             }
             monitorListEl.appendChild(li);
+        }
+
+        if (serialPorts.length > 0) {
+            var separator = document.createElement('li');
+            separator.className = 'serial-separator';
+            separator.innerHTML = '\u2500\u2500\u2500\u2500\u2500';
+            monitorListEl.appendChild(separator);
+
+            var header = document.createElement('li');
+            header.className = 'serial-separator-header';
+            header.textContent = '\uD83D\uDD0C Serial Tools';
+            monitorListEl.appendChild(header);
+
+            for (var s = 0; s < serialPorts.length; s++) {
+                var sli = document.createElement('li');
+                sli.className = 'monitor-item serial-item';
+                sli.textContent = '\uD83D\uDD0C ' + serialPorts[s].name;
+                var serialIndex = serialPorts[s].index != null ? serialPorts[s].index : (100 + s);
+                sli.dataset.index = serialIndex;
+                sli.addEventListener('click', (function (idx) {
+                    return function () { selectMonitor(idx); };
+                })(serialIndex));
+                if (serialIndex === activeMonitorIndex) {
+                    sli.classList.add('active');
+                }
+                monitorListEl.appendChild(sli);
+            }
         }
     }
 
@@ -1004,18 +1099,31 @@
         welcomeEl.classList.remove('visible');
         controlsEl.classList.add('visible');
 
-        var mon = monitors[index];
-        monitorNameEl.textContent = mon.name;
+        var isSerial = index >= 100;
+        var mon = isSerial ? serialPorts[index - 100] : monitors[index];
+        monitorNameEl.textContent = mon ? mon.name : '';
 
-        // Capabilities-first: read caps, then build controls and query
-        // supported codes in the 'capabilities' response handler above.
+        // Clear all content
         currentCapsMap = {};
         vcpControlsEl.innerHTML = '';
         advancedVCPData = {};
         advancedRows = {};
         advancedTableBuilt = false;
         advTableBody.innerHTML = '';
-        sendToHost('getCapabilities', { monitor: index });
+
+        if (isSerial) {
+            // Serial port mode
+            disableTab('controls', true);
+            disableTab('advanced', true);
+            switchToTab('raw');
+            sendToHost('openSerialPort', { portName: mon.portName });
+        } else {
+            // Normal monitor mode
+            disableTab('controls', false);
+            disableTab('advanced', false);
+            switchToTab('controls');
+            sendToHost('getCapabilities', { monitor: index });
+        }
     }
 
     // ---- Capabilities toggle ----
@@ -1035,6 +1143,7 @@
     for (var t = 0; t < tabBtns.length; t++) {
         tabBtns[t].addEventListener('click', function (btn) {
             return function () {
+                if (btn.disabled || btn.classList.contains('tab-disabled')) return;
                 var targetTab = btn.dataset.tab;
 
                 // Update active tab button

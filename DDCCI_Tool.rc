@@ -10,6 +10,7 @@ IDR_WEB_STYLE_CSS   WEBRES  "web\\style.css"
 IDR_WEB_APP_JS      WEBRES  "web\\app.js"
 IDR_WEB_MCCS_JS     WEBRES  "web\\mccs.js"
 IDR_WEB_LOGO_SVG    WEBRES  "web\\logo.svg"
+IDR_I2C_DEV_DLL     WEBRES  "tools\\i2c_dev.dll"
 
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION     VERSION_COMMA

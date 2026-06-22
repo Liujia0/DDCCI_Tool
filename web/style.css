@@ -213,6 +213,30 @@ body::after {
     color: var(--text-muted);
 }
 
+.serial-item {
+    opacity: 0.9;
+}
+
+.serial-separator {
+    font-size: 11px;
+    color: var(--text-dim);
+    padding: 10px 12px 2px;
+    letter-spacing: 2px;
+    list-style: none;
+    user-select: none;
+}
+
+.serial-separator-header {
+    font-size: 11px;
+    color: var(--text-dim);
+    padding: 2px 12px 6px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: 600;
+    list-style: none;
+    user-select: none;
+}
+
 .sidebar-footer {
     padding: 10px 16px;
     border-top: 1px solid var(--border);
@@ -598,6 +622,12 @@ body::after {
     color: var(--accent);
     background: var(--accent-bg);
     border-bottom: 2px solid var(--accent);
+}
+
+.tab-btn.tab-disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    pointer-events: none;
 }
 
 .tab-content {

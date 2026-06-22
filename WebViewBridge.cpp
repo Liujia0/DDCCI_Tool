@@ -1,5 +1,6 @@
 #include "WebViewBridge.h"
 #include "MonitorManager.h"
+#include "SerialPortManager.h"
 #include "resource.h"
 #include "version.h"
 #include <sstream>
@@ -70,6 +71,22 @@ namespace {
         return c;
     }
 
+    uint8_t ChkXorWithSeed(uint8_t seed, const std::vector<uint8_t>& bytes) {
+        uint8_t c = seed;
+        for (auto b : bytes) c ^= b;
+        return c;
+    }
+
+    bool ReplyChecksumMatches(const std::vector<uint8_t>& packet) {
+        const uint8_t seeds[] = { 0x6F, 0x50 };
+        for (uint8_t seed : seeds) {
+            uint8_t checksum = seed;
+            for (size_t i = 0; i + 1 < packet.size(); ++i) checksum ^= packet[i];
+            if (checksum == packet.back()) return true;
+        }
+        return false;
+    }
+
     std::wstring BuildVCPGetSendHex(uint8_t vcpCode) {
         std::vector<uint8_t> p = {0x6E, 0x51, 0x82, 0x01, vcpCode};
         p.push_back(ChkXor(p));
@@ -77,12 +94,12 @@ namespace {
     }
 
     std::wstring BuildVCPGetRecvHex(uint8_t vcpCode, uint32_t current, uint32_t max) {
-        std::vector<uint8_t> p = {0x6E, 0x51, 0x87, 0x00, vcpCode, 0x00,
+        std::vector<uint8_t> p = {0x6E, 0x88, 0x02, 0x00, vcpCode, 0x00,
             static_cast<uint8_t>((max >> 8) & 0xFF),
             static_cast<uint8_t>(max & 0xFF),
             static_cast<uint8_t>((current >> 8) & 0xFF),
             static_cast<uint8_t>(current & 0xFF)};
-        p.push_back(ChkXor(p));
+        p.push_back(ChkXorWithSeed(0x6F, p));
         return PacketHex(p);
     }
 
@@ -95,8 +112,8 @@ namespace {
     }
 
     std::wstring BuildVCPSetRecvHex() {
-        std::vector<uint8_t> p = {0x6E, 0x51, 0x81, 0x00};
-        p.push_back(ChkXor(p));
+        std::vector<uint8_t> p = {0x6E, 0x81, 0x00};
+        p.push_back(ChkXorWithSeed(0x6F, p));
         return PacketHex(p);
     }
 
@@ -117,7 +134,8 @@ namespace {
     static const size_t CAPS_CHUNK_SIZE = 26; // max data bytes per I2C segment
 
     std::wstring BuildCapsSegRecvHex(uint16_t offset, uint16_t nextOffset, const std::string& chunk) {
-        std::vector<uint8_t> p = {0x6E, 0x51};
+        (void)offset;
+        std::vector<uint8_t> p = {0x6E};
         uint32_t dataLen = 3 + static_cast<uint32_t>(chunk.size());
         p.push_back(static_cast<uint8_t>(0x80 | (dataLen & 0x7F)));
         p.push_back(0x00); // result: success
@@ -125,7 +143,7 @@ namespace {
         p.push_back(static_cast<uint8_t>(nextOffset & 0xFF));
         for (char ch : chunk)
             p.push_back(static_cast<uint8_t>(ch));
-        p.push_back(ChkXor(p));
+        p.push_back(ChkXorWithSeed(0x6F, p));
         return PacketHex(p);
     }
 
@@ -174,6 +192,63 @@ namespace {
         return ss.str();
     }
 
+    struct ParsedSerialReply {
+        bool valid = false;
+        std::wstring error;
+        std::vector<uint8_t> payload;
+    };
+
+    ParsedSerialReply ParseSerialReplyPacket(const std::vector<uint8_t>& packet) {
+        ParsedSerialReply out;
+
+        if (packet.size() < 4) {
+            out.error = L"Short reply";
+            return out;
+        }
+
+        if (packet[0] != 0x6E) {
+            std::wostringstream ss;
+            ss << L"Unexpected target 0x" << std::hex << std::uppercase
+               << static_cast<int>(packet[0]);
+            out.error = ss.str();
+            return out;
+        }
+
+        const uint8_t lenByte = packet[1];
+        if ((lenByte & 0x80) == 0) {
+            out.error = L"Reply length byte missing high bit";
+            return out;
+        }
+
+        const size_t payloadLen = static_cast<size_t>(lenByte & 0x7F);
+        const size_t expectedSize = payloadLen + 3;
+        if (packet.size() != expectedSize) {
+            std::wostringstream ss;
+            ss << L"Reply length mismatch: expected " << expectedSize
+               << L" bytes, got " << packet.size();
+            out.error = ss.str();
+            return out;
+        }
+
+        if (!ReplyChecksumMatches(packet)) {
+            uint8_t checksumReadSeed = 0x6F;
+            for (size_t i = 0; i + 1 < packet.size(); ++i) checksumReadSeed ^= packet[i];
+            uint8_t checksumAltSeed = 0x50;
+            for (size_t i = 0; i + 1 < packet.size(); ++i) checksumAltSeed ^= packet[i];
+            std::wostringstream ss;
+            ss << L"Checksum mismatch: calc=0x" << std::hex << std::uppercase
+               << static_cast<int>(checksumReadSeed) << L"/0x"
+               << static_cast<int>(checksumAltSeed) << L", recv=0x"
+               << static_cast<int>(packet.back());
+            out.error = ss.str();
+            return out;
+        }
+
+        out.payload.assign(packet.begin() + 2, packet.end() - 1);
+        out.valid = true;
+        return out;
+    }
+
 
     int ExtractJsonInt(const std::wstring& json, const std::wstring& key) {
         std::wstring search = L"\"" + key + L"\":";
@@ -201,8 +276,8 @@ namespace {
     }
 }
 
-WebViewBridge::WebViewBridge(MonitorManager* monitorMgr)
-    : m_monitorMgr(monitorMgr) {}
+WebViewBridge::WebViewBridge(MonitorManager* monitorMgr, SerialPortManager* serialMgr)
+    : m_monitorMgr(monitorMgr), m_serialMgr(serialMgr) {}
 
 WebViewBridge::~WebViewBridge() {
     Close();
@@ -295,6 +370,12 @@ void WebViewBridge::ExtractWebResources(HINSTANCE hInstance) {
         // web/ folder exists alongside exe — use it directly (Debug/dev mode)
         m_webDir = devWebDir;
         m_dataDir = devWebDir.substr(0, devWebDir.size() - 4) + L"WV2Data";
+        // In dev mode, DLL is expected next to the exe
+        m_dllDir = devWebDir.substr(0, devWebDir.size() - 4);
+
+        if (m_serialMgr) {
+            m_serialMgr->LoadI2CDev(m_dllDir + L"\\i2c_dev.dll");
+        }
         return;
     }
 
@@ -343,6 +424,41 @@ void WebViewBridge::ExtractWebResources(HINSTANCE hInstance) {
         }
 
         SaveResourceToFile(extractDir, entry.resourceId, entry.fileName);
+    }
+
+    // Extract transport DLLs to baseDir (%LOCALAPPDATA%\DDCCI_Tool\)
+    m_dllDir = baseDir;
+    const struct {
+        int resourceId;
+        const wchar_t* fileName;
+    } dllEntries[] = {
+        { IDR_I2C_DEV_DLL, L"i2c_dev.dll" },
+    };
+
+    for (const auto& dllEntry : dllEntries) {
+        std::wstring dllFilePath = baseDir + L"\\" + dllEntry.fileName;
+        bool needExtract = true;
+
+        HANDLE hExisting = CreateFileW(dllFilePath.c_str(), GENERIC_READ, FILE_SHARE_READ,
+                                       nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hExisting != INVALID_HANDLE_VALUE) {
+            LARGE_INTEGER fileSize;
+            if (GetFileSizeEx(hExisting, &fileSize)) {
+                HRSRC hRes = FindResourceW(nullptr, MAKEINTRESOURCEW(dllEntry.resourceId), L"WEBRES");
+                if (hRes && static_cast<DWORD>(fileSize.QuadPart) == SizeofResource(nullptr, hRes)) {
+                    needExtract = false;
+                }
+            }
+            CloseHandle(hExisting);
+        }
+
+        if (needExtract) {
+            SaveResourceToFile(baseDir, dllEntry.resourceId, dllEntry.fileName);
+        }
+    }
+
+    if (m_serialMgr) {
+        m_serialMgr->LoadI2CDev(baseDir + L"\\i2c_dev.dll");
     }
 
     m_webDir = extractDir;
@@ -568,6 +684,12 @@ std::wstring WebViewBridge::HandleRequest(const std::wstring& json) {
     if (method == L"openUrl")          return HandleOpenUrl(json);
     if (method == L"getVersion")       return L"{\"type\":\"appVersion\",\"version\":\"" VERSION_WDOT L"\"}";
 
+    // Serial port methods
+    if (method == L"enumerateSerialPorts") return BuildSerialPortList();
+    if (method == L"openSerialPort")       return HandleOpenSerialPort(json);
+    if (method == L"closeSerialPort")      return HandleCloseSerialPort(json);
+    if (method == L"sendSerialRaw")        return HandleSendSerialRaw(json);
+
     return BuildError(L"Unknown method: " + method);
 }
 
@@ -773,6 +895,156 @@ std::wstring WebViewBridge::BuildRawCommandResponse(int monitorIndex, const std:
 
     std::wostringstream ss;
     ss << L"{\"type\":\"rawResponse\",\"monitor\":" << monitorIndex
+       << L",\"txHex\":\"" << txHex << L"\""
+       << L",\"rxHex\":\"" << rxHex << L"\""
+       << L",\"parsed\":\"" << EscapeJson(parseInfo) << L"\""
+       << L"}";
+    return ss.str();
+}
+
+// ---- Serial port methods ----
+
+std::wstring WebViewBridge::BuildSerialPortList() {
+    std::wostringstream ss;
+    ss << L"{\"type\":\"serialPortList\",\"serialPorts\":[";
+
+    if (m_serialMgr) {
+        auto ports = m_serialMgr->EnumeratePorts();
+        for (size_t i = 0; i < ports.size(); i++) {
+            if (i > 0) ss << L",";
+            ss << L"{\"index\":" << (100 + i)
+               << L",\"name\":\"" << EscapeJson(ports[i].description) << L"\""
+               << L",\"isSerial\":true"
+               << L",\"portName\":\"" << EscapeJson(ports[i].portName) << L"\""
+               << L"}";
+        }
+    }
+
+    ss << L"]}";
+    return ss.str();
+}
+
+std::wstring WebViewBridge::HandleOpenSerialPort(const std::wstring& json) {
+    std::wstring portName = ExtractJsonString(json, L"portName");
+    if (portName.empty()) return BuildError(L"Missing portName");
+
+    if (!m_serialMgr) return BuildError(L"Serial port manager not available");
+
+    if (m_serialMgr->OpenPort(portName)) {
+        return L"{\"type\":\"serialPortOpened\",\"success\":true,\"portName\":\"" 
+               + EscapeJson(portName) + L"\"}";
+    } else {
+        return L"{\"type\":\"serialPortOpened\",\"success\":false,\"portName\":\"" 
+               + EscapeJson(portName) + L"\",\"error\":\"Failed to open port\"}";
+    }
+}
+
+std::wstring WebViewBridge::HandleCloseSerialPort(const std::wstring&) {
+    if (m_serialMgr) {
+        m_serialMgr->ClosePort();
+    }
+    return L"{\"type\":\"serialPortClosed\",\"success\":true}";
+}
+
+std::wstring WebViewBridge::HandleSendSerialRaw(const std::wstring& json) {
+    std::wstring portName = ExtractJsonString(json, L"portName");
+    std::wstring bodyHex = ExtractJsonString(json, L"bodyHex");
+
+    if (portName.empty() || bodyHex.empty()) return BuildError(L"Missing parameters");
+    if (!m_serialMgr) return BuildError(L"Serial port manager not available");
+
+    // Ensure port is open
+    if (!m_serialMgr->IsOpen() || m_serialMgr->GetOpenPortName() != portName) {
+        if (!m_serialMgr->OpenPort(portName)) {
+            return BuildError(L"Failed to open serial port: " + portName);
+        }
+    }
+
+    // Parse hex body (same logic as BuildRawCommandResponse)
+    std::vector<uint8_t> body = ParseHexString(bodyHex);
+    if (body.empty()) return BuildError(L"Invalid hex body");
+
+    // Build TX hex for display
+    std::vector<uint8_t> tx = {0x6E, 0x51};
+    tx.push_back(static_cast<uint8_t>(0x80 | (body.size() & 0x7F)));
+    for (auto b : body) tx.push_back(b);
+    tx.push_back(ChkXor(tx));
+    std::wstring txHex = BytesToHexStr(tx);
+
+    // Send via serial port I2C
+    std::vector<uint8_t> rxData;
+    std::string error;
+    bool ok = m_serialMgr->DDCSendRaw(body, rxData, error);
+
+    std::wstring rxHex, parseInfo;
+    if (ok && !rxData.empty()) {
+        rxHex = BytesToHexStr(rxData);
+        ParsedSerialReply reply = ParseSerialReplyPacket(rxData);
+
+        // Try to parse the response
+        if (body.size() >= 2 && body[0] == 0x01) {
+            // GetVCP response
+            if (reply.valid && reply.payload.size() >= 8 && reply.payload[0] == 0x02) {
+                uint8_t vcp = body[1];
+                uint32_t maxVal = (static_cast<uint32_t>(reply.payload[4]) << 8) | reply.payload[5];
+                uint32_t curVal = (static_cast<uint32_t>(reply.payload[6]) << 8) | reply.payload[7];
+                uint8_t resultCode = reply.payload[1];
+                uint8_t replyVcp = reply.payload[2];
+                uint8_t typeCode = reply.payload[3];
+                std::wostringstream info;
+                info << L"GetVCP " << std::hex << std::uppercase << static_cast<int>(vcp)
+                     << L": current=" << std::dec << curVal
+                     << L", max=" << maxVal
+                     << L", result=0x" << std::hex << std::uppercase << static_cast<int>(resultCode)
+                     << L", replyVcp=0x" << static_cast<int>(replyVcp)
+                     << L", type=0x" << static_cast<int>(typeCode);
+                parseInfo = info.str();
+            } else if (reply.valid) {
+                parseInfo = L"GetVCP: unexpected payload (" + std::to_wstring(reply.payload.size()) + L" bytes)";
+            } else if (!reply.error.empty()) {
+                parseInfo = L"GetVCP: invalid reply - " + reply.error;
+            } else {
+                parseInfo = L"GetVCP: short response (" + std::to_wstring(rxData.size()) + L" bytes)";
+            }
+        } else if (body.size() >= 4 && body[0] == 0x03) {
+            // SetVCP response
+            uint8_t vcp = body[1];
+            uint32_t value = (static_cast<uint32_t>(body[2]) << 8) | body[3];
+            std::wostringstream info;
+            info << L"SetVCP " << std::hex << std::uppercase << static_cast<int>(vcp)
+                 << L" = " << std::dec << value;
+            if (reply.valid && !reply.payload.empty()) {
+                info << L", result=0x" << std::hex << std::uppercase
+                     << static_cast<int>(reply.payload[0]);
+            } else if (!reply.error.empty()) {
+                info << L", invalid reply: " << reply.error;
+            }
+            parseInfo = info.str();
+        } else if (reply.valid && body.size() >= 1 && body[0] == 0xF3 && reply.payload.size() >= 3) {
+            uint8_t resultCode = reply.payload[0];
+            uint16_t nextOffset = (static_cast<uint16_t>(reply.payload[1]) << 8) | reply.payload[2];
+            size_t chunkLen = reply.payload.size() - 3;
+            std::wostringstream info;
+            info << L"Capabilities chunk: result=0x" << std::hex << std::uppercase
+                 << static_cast<int>(resultCode)
+                 << L", nextOffset=" << std::dec << nextOffset
+                 << L", dataBytes=" << chunkLen;
+            parseInfo = info.str();
+        } else if (reply.valid) {
+            parseInfo = L"Response: " + std::to_wstring(reply.payload.size()) + L" payload bytes";
+        } else if (!reply.error.empty()) {
+            parseInfo = L"Invalid reply: " + reply.error;
+        } else {
+            parseInfo = L"Response: " + std::to_wstring(rxData.size()) + L" bytes";
+        }
+    } else {
+        rxHex = L"";
+        std::wstring errW(error.begin(), error.end());
+        parseInfo = L"Error: " + errW;
+    }
+
+    std::wostringstream ss;
+    ss << L"{\"type\":\"serialRawResponse\""
        << L",\"txHex\":\"" << txHex << L"\""
        << L",\"rxHex\":\"" << rxHex << L"\""
        << L",\"parsed\":\"" << EscapeJson(parseInfo) << L"\""

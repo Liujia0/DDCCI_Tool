@@ -11,10 +11,11 @@
 #include "UpdateChecker.h"
 
 class MonitorManager;
+class SerialPortManager;
 
 class WebViewBridge {
 public:
-    WebViewBridge(MonitorManager* monitorMgr);
+    WebViewBridge(MonitorManager* monitorMgr, SerialPortManager* serialMgr);
     ~WebViewBridge();
 
     WebViewBridge(const WebViewBridge&) = delete;
@@ -39,6 +40,12 @@ private:
     std::wstring BuildRawCommandResponse(int monitorIndex, const std::wstring& bodyHex);
     std::wstring EscapeJson(const std::wstring& s);
 
+    // Serial port response builders
+    std::wstring BuildSerialPortList();
+    std::wstring HandleOpenSerialPort(const std::wstring& json);
+    std::wstring HandleCloseSerialPort(const std::wstring& json);
+    std::wstring HandleSendSerialRaw(const std::wstring& json);
+
     std::wstring GetWebDirPath();
 
     // Update check handlers
@@ -51,12 +58,14 @@ private:
 
     HWND m_hwnd = nullptr;
     MonitorManager* m_monitorMgr = nullptr;
+    SerialPortManager* m_serialMgr = nullptr;
     Microsoft::WRL::ComPtr<ICoreWebView2Controller> m_controller;
     Microsoft::WRL::ComPtr<ICoreWebView2> m_webview;
     EventRegistrationToken m_webMessageToken = {};
     EventRegistrationToken m_navCompleteToken = {};
     std::wstring m_webDir;
     std::wstring m_dataDir;
+    std::wstring m_dllDir;
 
     // Update check async state
     std::future<UpdateInfo> m_checkFuture;

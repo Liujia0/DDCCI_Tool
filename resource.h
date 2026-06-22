@@ -9,3 +9,4 @@
 #define IDR_WEB_APP_JS      203
 #define IDR_WEB_MCCS_JS     204
 #define IDR_WEB_LOGO_SVG    205
+#define IDR_I2C_DEV_DLL     206

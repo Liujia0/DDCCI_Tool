@@ -104,6 +104,7 @@
   <ItemGroup>
     <ClCompile Include="main.cpp" />
     <ClCompile Include="MonitorManager.cpp" />
+    <ClCompile Include="SerialPortManager.cpp" />
     <ClCompile Include="UpdateChecker.cpp" />
     <ClCompile Include="WebViewBridge.cpp" />
   </ItemGroup>
@@ -119,6 +120,7 @@
 
   <ItemGroup>
     <ClInclude Include="MonitorManager.h" />
+    <ClInclude Include="SerialPortManager.h" />
     <ClInclude Include="UpdateChecker.h" />
     <ClInclude Include="WebViewBridge.h" />
     <ClInclude Include="resource.h" />

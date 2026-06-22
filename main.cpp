@@ -4,6 +4,7 @@
 
 #include <Windows.h>
 #include "MonitorManager.h"
+#include "SerialPortManager.h"
 #include "WebViewBridge.h"
 #include "resource.h"
 #include "version.h"
@@ -15,9 +16,10 @@ static const int WINDOW_HEIGHT = 680;
 
 struct AppState {
     MonitorManager monitorMgr;
+    SerialPortManager serialMgr;
     WebViewBridge bridge;
 
-    AppState() : bridge(&monitorMgr) {}
+    AppState() : bridge(&monitorMgr, &serialMgr) {}
 };
 
 static AppState* g_app = nullptr;
