@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <cwctype>
 #include <cstdarg>
+#include <map>
+#include <set>
 #include <vector>
 
 namespace {
@@ -361,14 +363,21 @@ namespace {
         return out;
     }
 
-    bool IsNvapiSerialPortName(const std::wstring& portName) {
-        return ContainsNoCaseLocal(portName, L"nvapi") ||
+    bool IsGpuSerialPortName(const std::wstring& portName) {
+        return ContainsNoCaseLocal(portName, L"igcl") ||
+               ContainsNoCaseLocal(portName, L"intel") ||
+               ContainsNoCaseLocal(portName, L"igfxext") ||
+               ContainsNoCaseLocal(portName, L"adl") ||
+               ContainsNoCaseLocal(portName, L"adlx") ||
+               ContainsNoCaseLocal(portName, L"amd") ||
+               ContainsNoCaseLocal(portName, L"radeon") ||
+               ContainsNoCaseLocal(portName, L"nvapi") ||
                ContainsNoCaseLocal(portName, L"nvidia") ||
                ContainsNoCaseLocal(portName, L"geforce");
     }
 
     std::wstring ExtractMonitorHintFromSerialPortName(const std::wstring& portName) {
-        if (!IsNvapiSerialPortName(portName)) {
+        if (!IsGpuSerialPortName(portName)) {
             return {};
         }
 
@@ -386,7 +395,7 @@ namespace {
     }
 
     int FindProxyMonitorIndex(MonitorManager* monitorMgr, const std::wstring& portName) {
-        if (!monitorMgr || !IsNvapiSerialPortName(portName)) {
+        if (!monitorMgr || !IsGpuSerialPortName(portName)) {
             return -1;
         }
 
@@ -421,6 +430,36 @@ namespace {
         }
 
         return -1;
+    }
+
+    struct SerialPortAssignments {
+        std::map<int, SerialPortInfo> monitorRawPorts;
+        std::vector<SerialPortInfo> unmergedPorts;
+    };
+
+    SerialPortAssignments BuildSerialPortAssignments(MonitorManager* monitorMgr,
+                                                     SerialPortManager* serialMgr) {
+        SerialPortAssignments assignments;
+        if (!serialMgr) {
+            return assignments;
+        }
+
+        const auto ports = serialMgr->EnumeratePorts();
+        std::set<int> matchedMonitors;
+        for (const auto& port : ports) {
+            const std::wstring matchText = !port.description.empty() ? port.description : port.portName;
+            const bool isGpuPort = IsGpuSerialPortName(matchText) || IsGpuSerialPortName(port.portName);
+            const int proxyMonitorIndex = isGpuPort ? FindProxyMonitorIndex(monitorMgr, matchText) : -1;
+
+            if (proxyMonitorIndex >= 0 && matchedMonitors.insert(proxyMonitorIndex).second) {
+                assignments.monitorRawPorts.emplace(proxyMonitorIndex, port);
+                continue;
+            }
+
+            assignments.unmergedPorts.push_back(port);
+        }
+
+        return assignments;
     }
 
     bool BuildMonitorRawCommandOutput(MonitorManager* monitorMgr,
@@ -961,14 +1000,21 @@ std::wstring WebViewBridge::BuildError(const std::wstring& msg) {
 }
 
 std::wstring WebViewBridge::BuildMonitorList() {
+    const SerialPortAssignments assignments = BuildSerialPortAssignments(m_monitorMgr, m_serialMgr);
     std::wostringstream ss;
     ss << L"{\"type\":\"monitorList\",\"monitors\":[";
     int count = m_monitorMgr->GetMonitorCount();
     for (int i = 0; i < count; i++) {
         if (i > 0) ss << L",";
         auto* mon = m_monitorMgr->GetMonitor(i);
+        const auto rawPortIt = assignments.monitorRawPorts.find(i);
         ss << L"{\"index\":" << i
-           << L",\"name\":\"" << EscapeJson(mon ? mon->name : L"Unknown") << L"\"}";
+           << L",\"name\":\"" << EscapeJson(mon ? mon->name : L"Unknown") << L"\"";
+        if (rawPortIt != assignments.monitorRawPorts.end()) {
+            ss << L",\"rawPortName\":\"" << EscapeJson(rawPortIt->second.portName) << L"\""
+               << L",\"rawPortLabel\":\"" << EscapeJson(rawPortIt->second.description) << L"\"";
+        }
+        ss << L"}";
     }
     ss << L"]}";
     return ss.str();
@@ -1099,19 +1145,17 @@ std::wstring WebViewBridge::BuildRawCommandResponse(int monitorIndex, const std:
 // ---- Serial port methods ----
 
 std::wstring WebViewBridge::BuildSerialPortList() {
+    const SerialPortAssignments assignments = BuildSerialPortAssignments(m_monitorMgr, m_serialMgr);
     std::wostringstream ss;
     ss << L"{\"type\":\"serialPortList\",\"serialPorts\":[";
 
-    if (m_serialMgr) {
-        auto ports = m_serialMgr->EnumeratePorts();
-        for (size_t i = 0; i < ports.size(); i++) {
-            if (i > 0) ss << L",";
-            ss << L"{\"index\":" << (100 + i)
-               << L",\"name\":\"" << EscapeJson(ports[i].description) << L"\""
-               << L",\"isSerial\":true"
-               << L",\"portName\":\"" << EscapeJson(ports[i].portName) << L"\""
-               << L"}";
-        }
+    for (size_t i = 0; i < assignments.unmergedPorts.size(); i++) {
+        if (i > 0) ss << L",";
+        ss << L"{\"index\":" << (100 + i)
+           << L",\"name\":\"" << EscapeJson(assignments.unmergedPorts[i].description) << L"\""
+           << L",\"isSerial\":true"
+           << L",\"portName\":\"" << EscapeJson(assignments.unmergedPorts[i].portName) << L"\""
+           << L"}";
     }
 
     ss << L"]}";

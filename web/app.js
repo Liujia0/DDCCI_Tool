@@ -179,7 +179,7 @@
         } else if (method === 'openSerialPort') {
             label = 'Open ' + (params.portName || '');
         } else if (method === 'sendSerialRaw') {
-            label = 'Serial RAW ' + (params.portName || '');
+            label = 'Serial RAW ' + (params.portLabel || params.portName || '');
         }
         var rec = {
             op: method,
@@ -950,10 +950,20 @@
             var mon = serialPorts[activeMonitorIndex - 100];
             sendToHost('sendSerialRaw', {
                 portName: mon.portName,
+                portLabel: mon.name,
                 bodyHex: rawHexInput.value.trim()
             });
         } else {
-            sendToHost('sendRaw', { monitor: activeMonitorIndex, bodyHex: rawHexInput.value.trim() });
+            var monitor = monitors[activeMonitorIndex];
+            if (monitor && monitor.rawPortName) {
+                sendToHost('sendSerialRaw', {
+                    portName: monitor.rawPortName,
+                    portLabel: monitor.rawPortLabel || monitor.name,
+                    bodyHex: rawHexInput.value.trim()
+                });
+            } else {
+                sendToHost('sendRaw', { monitor: activeMonitorIndex, bodyHex: rawHexInput.value.trim() });
+            }
         }
     });
 
@@ -1023,7 +1033,10 @@
     }
 
     function refreshMonitors() {
-        activeMonitorIndex = -1;
+        monitors = [];
+        serialPorts = [];
+        renderMonitorList();
+        selectMonitor(-1);
         showScanOverlay();
         sendToHost('enumerateMonitors');
         sendToHost('enumerateSerialPorts');
