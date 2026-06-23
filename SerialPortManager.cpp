@@ -67,7 +67,6 @@ constexpr uint8_t DDC_READ_ADDR = 0x6F;
 constexpr uint8_t DDC_7BIT_ADDR = 0x37;
 constexpr uint8_t DDC_HOST_ADDR = 0x51;
 constexpr uint8_t DDC_REPLY_CHECKSUM_SEED_ALT = 0x50;
-constexpr DWORD DDC_REPLY_DELAY_MS = 70;
 constexpr wchar_t I2C_DEV_PORT_PREFIX[] = L"i2cdev:";
 
 std::map<std::wstring, std::wstring> g_i2cDevScanNameMap;
@@ -857,6 +856,24 @@ std::wstring SerialPortManager::GetOpenPortName() const {
     return m_deviceName;
 }
 
+void SerialPortManager::SetRawReadWaitMs(DWORD waitMs) {
+    m_rawReadWaitMs = waitMs;
+}
+
+DWORD SerialPortManager::GetRawReadWaitMs() const {
+    return m_rawReadWaitMs;
+}
+
+void SerialPortManager::WaitBeforeRawRead(const wchar_t* stage) const {
+    const DWORD waitMs = GetRawReadWaitMs();
+    SPM_WriteLog(L"%s: wait %lu ms before reply read",
+                 stage ? stage : L"WaitBeforeRawRead",
+                 static_cast<unsigned long>(waitMs));
+    if (waitMs > 0) {
+        Sleep(waitMs);
+    }
+}
+
 bool SerialPortManager::IsRestartPreferredDevice() const {
     const std::wstring deviceName = StripI2CDevPrefix(m_deviceName);
     return ContainsNoCase(deviceName, L"igcl") ||
@@ -1081,7 +1098,7 @@ bool SerialPortManager::DDCSendRawI2CDevWriteThenRead(const std::vector<uint8_t>
     }
 
     SPM_WriteLog(L"DDCSendRawI2CDev[write/read]: write ok, transferred=%lld", static_cast<long long>(txLen));
-    Sleep(DDC_REPLY_DELAY_MS);
+    WaitBeforeRawRead(L"DDCSendRawI2CDev[write/read]");
 
     std::vector<uint8_t> readBuf(512, 0);
     intptr_t rxLen = static_cast<intptr_t>(readBuf.size());
@@ -1152,6 +1169,8 @@ bool SerialPortManager::DDCSendRawI2CDevWriteThenAutoRead(const std::vector<uint
         error = BuildI2CDevErrorMessage("i2c_driver_write failed");
         return false;
     }
+
+    WaitBeforeRawRead(L"DDCSendRawI2CDev[auto-read]");
 
     std::vector<uint8_t> readBuf(255, 0);
     uint8_t rxLen = static_cast<uint8_t>(readBuf.size());
@@ -1225,7 +1244,7 @@ bool SerialPortManager::DDCSendRawI2CDevWriteOnly(const std::vector<uint8_t>& tx
 bool SerialPortManager::DDCReadReplyI2CDevAfterWrite(std::vector<uint8_t>& rxData,
                                                      std::string& error) {
     rxData.clear();
-    Sleep(DDC_REPLY_DELAY_MS);
+    WaitBeforeRawRead(L"DDCReadReplyI2CDevAfterWrite");
 
     std::string readError;
     {
@@ -1352,31 +1371,26 @@ bool SerialPortManager::DDCSendRawI2CDev(const std::vector<uint8_t>& txBody,
             rxData.clear();
             return true;
         }
-        SPM_WriteLog(L"DDCSendRawI2CDev: write-only path failed for %s, fallback to restart path. err=%S",
+        SPM_WriteLog(L"DDCSendRawI2CDev: write-only path failed for %s, fallback to split read path. err=%S",
                      deviceName.c_str(), error.c_str());
     }
 
-    const bool preferRestartPath = IsRestartPreferredDevice();
     const bool preferAutoReadPath = IsAutoReadPreferredDevice();
-    if (preferRestartPath) {
-        SPM_WriteLog(L"DDCSendRawI2CDev: using restart-preferred path for %s", deviceName.c_str());
-        std::string restartError;
-        if (DDCSendRawI2CDevWriteReadRestart(txPacket, rxData, restartError)) {
+    if (preferAutoReadPath) {
+        SPM_WriteLog(L"DDCSendRawI2CDev: using auto-read preferred split path for %s", deviceName.c_str());
+        std::string autoReadError;
+        if (DDCSendRawI2CDevWriteThenAutoRead(txPacket, rxData, autoReadError)) {
             return true;
         }
-        SPM_WriteLog(L"DDCSendRawI2CDev: write_read_restart failed, fallback to alternate read path. err=%S",
-                     restartError.c_str());
+        SPM_WriteLog(L"DDCSendRawI2CDev: auto-read path failed, fallback to write/read path. err=%S",
+                     autoReadError.c_str());
 
-        if (preferAutoReadPath) {
-            std::string autoReadError;
-            if (DDCSendRawI2CDevWriteThenAutoRead(txPacket, rxData, autoReadError)) {
-                return true;
-            }
-            SPM_WriteLog(L"DDCSendRawI2CDev: auto-read fallback failed, err=%S", autoReadError.c_str());
-            error = restartError + "; auto-read fallback failed: " + autoReadError;
-        } else {
-            error = restartError;
+        std::string writeReadError;
+        if (DDCSendRawI2CDevWriteThenRead(txPacket, rxData, writeReadError)) {
+            return true;
         }
+        error = autoReadError + "; write/read fallback failed: " + writeReadError;
+        return false;
     }
 
     return DDCSendRawI2CDevWriteThenRead(txPacket, rxData, error);

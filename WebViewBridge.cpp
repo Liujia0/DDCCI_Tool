@@ -533,18 +533,6 @@ namespace {
         return true;
     }
 
-    bool IsDxva2ProxySupportedRawBody(const std::vector<uint8_t>& body) {
-        if (body.size() >= 2 && body[0] == 0x01) {
-            return true;
-        }
-        if (body.size() >= 4 && body[0] == 0x03) {
-            return true;
-        }
-        if (body.size() >= 3 && body[0] == 0xF3) {
-            return true;
-        }
-        return false;
-    }
 }
 
 WebViewBridge::WebViewBridge(MonitorManager* monitorMgr, SerialPortManager* serialMgr)
@@ -1198,43 +1186,26 @@ std::wstring WebViewBridge::HandleCloseSerialPort(const std::wstring&) {
 std::wstring WebViewBridge::HandleSendSerialRaw(const std::wstring& json) {
     std::wstring portName = ExtractJsonString(json, L"portName");
     std::wstring bodyHex = ExtractJsonString(json, L"bodyHex");
+    int readWaitMs = ExtractJsonInt(json, L"readWaitMs");
 
     if (portName.empty() || bodyHex.empty()) return BuildError(L"Missing parameters");
+    if (readWaitMs < 0) {
+        readWaitMs = static_cast<int>(SerialPortManager::DEFAULT_RAW_READ_WAIT_MS);
+    }
 
     std::vector<uint8_t> body = ParseHexString(bodyHex);
     if (body.empty()) return BuildError(L"Invalid hex body");
 
-    BridgeLog(L"HandleSendSerialRaw: port=%s body=%s", portName.c_str(), bodyHex.c_str());
+    BridgeLog(L"HandleSendSerialRaw: port=%s body=%s readWaitMs=%d",
+              portName.c_str(), bodyHex.c_str(), readWaitMs);
     const int proxyMonitorIndex = FindProxyMonitorIndex(m_monitorMgr, portName);
-    if (proxyMonitorIndex >= 0 && IsDxva2ProxySupportedRawBody(body)) {
-        RawCommandOutput output;
-        std::wstring proxyError;
-        if (!BuildMonitorRawCommandOutput(m_monitorMgr, proxyMonitorIndex, bodyHex, output, proxyError)) {
-            BridgeLog(L"HandleSendSerialRaw: DXVA2 fallback failed monitor=%d port=%s err=%s",
-                      proxyMonitorIndex, portName.c_str(), proxyError.c_str());
-            return BuildError(proxyError);
-        }
-
-        BridgeLog(L"HandleSendSerialRaw: DXVA2 fallback monitor=%d port=%s tx=%s rx=%s",
-                  proxyMonitorIndex, portName.c_str(), output.txHex.c_str(), output.rxHex.c_str());
-
-        std::wostringstream ss;
-        ss << L"{\"type\":\"serialRawResponse\""
-           << L",\"portName\":\"" << EscapeJson(portName) << L"\""
-           << L",\"monitor\":" << proxyMonitorIndex
-           << L",\"txHex\":\"" << output.txHex << L"\""
-           << L",\"rxHex\":\"" << output.rxHex << L"\""
-           << L",\"parsed\":\"" << EscapeJson(output.parseInfo) << L"\""
-           << L"}";
-        return ss.str();
-    }
-
     if (proxyMonitorIndex >= 0) {
-        BridgeLog(L"HandleSendSerialRaw: DXVA2 fallback unsupported for raw body on monitor=%d port=%s, try native transport",
+        BridgeLog(L"HandleSendSerialRaw: proxy monitor=%d port=%s uses native serial RAW transport",
                   proxyMonitorIndex, portName.c_str());
     }
 
     if (!m_serialMgr) return BuildError(L"Serial port manager not available");
+    m_serialMgr->SetRawReadWaitMs(static_cast<DWORD>(readWaitMs));
 
     // Ensure port is open
     if (!m_serialMgr->IsOpen() || m_serialMgr->GetOpenPortName() != portName) {

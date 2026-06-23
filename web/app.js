@@ -905,6 +905,44 @@
     var rawTxHex = document.getElementById('raw-tx-hex');
     var btnRawSend = document.getElementById('btn-raw-send');
     var rawResponse = document.getElementById('raw-response');
+    var rawWaitRow = document.getElementById('raw-wait-row');
+    var rawReadWaitInput = document.getElementById('raw-read-wait-input');
+
+    function getSelectedRawSerialTarget() {
+        if (activeMonitorIndex < 0) return null;
+        if (isSerialMode()) {
+            var serialMon = serialPorts[activeMonitorIndex - 100];
+            if (!serialMon) return null;
+            return { portName: serialMon.portName, portLabel: serialMon.name };
+        }
+
+        var monitor = monitors[activeMonitorIndex];
+        if (!monitor || !monitor.rawPortName) return null;
+        return {
+            portName: monitor.rawPortName,
+            portLabel: monitor.rawPortLabel || monitor.name
+        };
+    }
+
+    function updateRawReadWaitVisibility() {
+        if (!rawWaitRow) return;
+        rawWaitRow.classList.toggle('hidden', !getSelectedRawSerialTarget());
+    }
+
+    function getRawReadWaitMs() {
+        if (!rawReadWaitInput) return 100;
+        var value = parseInt(rawReadWaitInput.value, 10);
+        if (isNaN(value) || value < 0) {
+            value = 100;
+        }
+        rawReadWaitInput.value = String(value);
+        return value;
+    }
+
+    if (rawReadWaitInput) {
+        rawReadWaitInput.value = '100';
+        rawReadWaitInput.addEventListener('blur', getRawReadWaitMs);
+    }
 
     function computeTxHex() {
         var hex = rawHexInput.value.replace(/\s+/g, ' ').trim();
@@ -946,24 +984,16 @@
         }
         rawResponse.innerHTML = '<span class="raw-placeholder">Sending...</span>';
 
-        if (isSerialMode()) {
-            var mon = serialPorts[activeMonitorIndex - 100];
+        var serialTarget = getSelectedRawSerialTarget();
+        if (serialTarget) {
             sendToHost('sendSerialRaw', {
-                portName: mon.portName,
-                portLabel: mon.name,
-                bodyHex: rawHexInput.value.trim()
+                portName: serialTarget.portName,
+                portLabel: serialTarget.portLabel,
+                bodyHex: rawHexInput.value.trim(),
+                readWaitMs: getRawReadWaitMs()
             });
         } else {
-            var monitor = monitors[activeMonitorIndex];
-            if (monitor && monitor.rawPortName) {
-                sendToHost('sendSerialRaw', {
-                    portName: monitor.rawPortName,
-                    portLabel: monitor.rawPortLabel || monitor.name,
-                    bodyHex: rawHexInput.value.trim()
-                });
-            } else {
-                sendToHost('sendRaw', { monitor: activeMonitorIndex, bodyHex: rawHexInput.value.trim() });
-            }
+            sendToHost('sendRaw', { monitor: activeMonitorIndex, bodyHex: rawHexInput.value.trim() });
         }
     });
 
@@ -1106,6 +1136,7 @@
         if (index < 0) {
             welcomeEl.classList.add('visible');
             controlsEl.classList.remove('visible');
+            updateRawReadWaitVisibility();
             return;
         }
 
@@ -1115,6 +1146,7 @@
         var isSerial = index >= 100;
         var mon = isSerial ? serialPorts[index - 100] : monitors[index];
         monitorNameEl.textContent = mon ? mon.name : '';
+        updateRawReadWaitVisibility();
 
         // Clear all content
         currentCapsMap = {};
@@ -1138,6 +1170,8 @@
             sendToHost('getCapabilities', { monitor: index });
         }
     }
+
+    updateRawReadWaitVisibility();
 
     // ---- Capabilities toggle ----
 

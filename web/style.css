@@ -766,12 +766,16 @@ body::after {
     margin-bottom: 12px;
 }
 
+.raw-row.hidden {
+    display: none;
+}
+
 .raw-row:last-child {
     margin-bottom: 0;
 }
 
 .raw-label {
-    width: 70px;
+    width: 84px;
     font-size: 12px;
     font-weight: 600;
     color: var(--text-secondary);
@@ -801,6 +805,37 @@ body::after {
 .raw-hex-input::placeholder {
     color: var(--text-muted);
     letter-spacing: 1px;
+}
+
+.raw-inline {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.raw-number-input {
+    width: 120px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.15s;
+}
+
+.raw-number-input:focus {
+    border-color: var(--accent);
+}
+
+.raw-input-suffix {
+    font-size: 12px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
 }
 
 .raw-code {

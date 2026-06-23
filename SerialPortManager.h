@@ -13,6 +13,8 @@ struct SerialPortInfo {
 
 class SerialPortManager {
 public:
+    static constexpr DWORD DEFAULT_RAW_READ_WAIT_MS = 100;
+
     SerialPortManager() = default;
     ~SerialPortManager();
 
@@ -27,6 +29,8 @@ public:
     void ClosePort();
     bool IsOpen() const;
     std::wstring GetOpenPortName() const;
+    void SetRawReadWaitMs(DWORD waitMs);
+    DWORD GetRawReadWaitMs() const;
 
     bool SendDDCPacket(const std::vector<uint8_t>& body);
     std::vector<uint8_t> ReceiveDDCPacket(size_t expectedLen);
@@ -44,8 +48,10 @@ private:
     bool DDCReadReplyI2CDevAfterWrite(std::vector<uint8_t>& rxData, std::string& error);
     bool ExtractFirstValidDDCReply(const std::vector<uint8_t>& rawData, std::vector<uint8_t>& packet, std::string& reason) const;
     bool IsValidDDCReply(const std::vector<uint8_t>& packet, std::string& reason) const;
+    void WaitBeforeRawRead(const wchar_t* stage) const;
     bool IsRestartPreferredDevice() const;
     bool IsAutoReadPreferredDevice() const;
 
     std::wstring m_deviceName;
+    DWORD m_rawReadWaitMs = DEFAULT_RAW_READ_WAIT_MS;
 };

@@ -102,6 +102,14 @@
                                     <label class="raw-label">Full TX:</label>
                                     <code id="raw-tx-hex" class="raw-code"></code>
                                 </div>
+                                <div class="raw-row hidden" id="raw-wait-row">
+                                    <label class="raw-label" for="raw-read-wait-input">Read wait:</label>
+                                    <div class="raw-inline">
+                                        <input type="number" id="raw-read-wait-input" class="raw-number-input"
+                                               min="0" step="1" value="100">
+                                        <span class="raw-input-suffix">ms</span>
+                                    </div>
+                                </div>
                                 <div class="raw-row">
                                     <button id="btn-raw-send" class="raw-send-btn">Send</button>
                                 </div>
