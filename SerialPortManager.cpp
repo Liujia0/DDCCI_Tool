@@ -4,6 +4,7 @@
 #include <cstdarg>
 #include <cwctype>
 #include <cstdio>
+#include <map>
 #include <vector>
 
 namespace {
@@ -68,6 +69,131 @@ constexpr uint8_t DDC_HOST_ADDR = 0x51;
 constexpr uint8_t DDC_REPLY_CHECKSUM_SEED_ALT = 0x50;
 constexpr DWORD DDC_REPLY_DELAY_MS = 70;
 constexpr wchar_t I2C_DEV_PORT_PREFIX[] = L"i2cdev:";
+
+std::map<std::wstring, std::wstring> g_i2cDevScanNameMap;
+
+I2CDEV_PTR SafeI2CDriverInit(DWORD* sehCode) {
+    if (sehCode) *sehCode = 0;
+    __try {
+        return g_i2c_driver_init(I2C_DEV_MAGIC);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        if (sehCode) *sehCode = GetExceptionCode();
+        return nullptr;
+    }
+}
+
+bool SafeI2CDriverScan(I2CDEV_PTR handle, intptr_t* count, DWORD* sehCode) {
+    if (sehCode) *sehCode = 0;
+    __try {
+        return g_i2c_driver_scan(handle, count);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        if (sehCode) *sehCode = GetExceptionCode();
+        return false;
+    }
+}
+
+bool SafeI2CDriverGetScanResult(I2CDEV_PTR handle, int index, uint8_t* buf, int size, DWORD* sehCode) {
+    if (sehCode) *sehCode = 0;
+    __try {
+        return g_i2c_driver_get_scan_result(handle, index, buf, size);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        if (sehCode) *sehCode = GetExceptionCode();
+        return false;
+    }
+}
+
+bool SafeI2CDriverGetSupportedDevice(I2CDEV_PTR handle, int index, uint8_t* buf, int size, DWORD* sehCode) {
+    if (sehCode) *sehCode = 0;
+    __try {
+        return g_i2c_driver_get_supported_device(handle, index, buf, size);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        if (sehCode) *sehCode = GetExceptionCode();
+        return false;
+    }
+}
+
+bool SafeI2CDriverOpen(I2CDEV_PTR handle, const char* device, DWORD* sehCode) {
+    if (sehCode) *sehCode = 0;
+    __try {
+        return g_i2c_driver_open(handle, device);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        if (sehCode) *sehCode = GetExceptionCode();
+        return false;
+    }
+}
+
+bool SafeI2CDriverSetSpeed(I2CDEV_PTR handle, uint32_t speed, DWORD* sehCode) {
+    if (sehCode) *sehCode = 0;
+    __try {
+        return g_i2c_driver_set_speed(handle, speed);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        if (sehCode) *sehCode = GetExceptionCode();
+        return false;
+    }
+}
+
+bool SafeI2CDriverSetEnableBulk(I2CDEV_PTR handle, bool enable, DWORD* sehCode) {
+    if (sehCode) *sehCode = 0;
+    __try {
+        return g_i2c_driver_set_enable_bulk(handle, enable);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        if (sehCode) *sehCode = GetExceptionCode();
+        return false;
+    }
+}
+
+bool SafeI2CDriverClose(I2CDEV_PTR handle, DWORD* sehCode) {
+    if (sehCode) *sehCode = 0;
+    __try {
+        g_i2c_driver_close(handle);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        if (sehCode) *sehCode = GetExceptionCode();
+        return false;
+    }
+}
+
+bool SafeI2CDriverWriteReadRestart(I2CDEV_PTR handle, uint8_t addr, uint8_t* writeBuf,
+                                   intptr_t* writeLen, intptr_t* readLen, uint8_t* readBuf,
+                                   DWORD* sehCode) {
+    if (sehCode) *sehCode = 0;
+    __try {
+        return g_i2c_driver_write_read_restart(handle, addr, writeBuf, writeLen, readLen, readBuf);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        if (sehCode) *sehCode = GetExceptionCode();
+        return false;
+    }
+}
+
+bool SafeI2CDriverWrite(I2CDEV_PTR handle, uint8_t addr, uint8_t* buf, intptr_t* len, DWORD* sehCode) {
+    if (sehCode) *sehCode = 0;
+    __try {
+        return g_i2c_driver_write(handle, addr, buf, len);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        if (sehCode) *sehCode = GetExceptionCode();
+        return false;
+    }
+}
+
+bool SafeI2CDriverRead(I2CDEV_PTR handle, uint8_t addr, uint8_t* buf, intptr_t* len, DWORD* sehCode) {
+    if (sehCode) *sehCode = 0;
+    __try {
+        return g_i2c_driver_read(handle, addr, buf, len);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        if (sehCode) *sehCode = GetExceptionCode();
+        return false;
+    }
+}
+
+bool SafeI2CDriverReadDdcciAuto(I2CDEV_PTR handle, uint8_t addr, uint8_t* buf, uint8_t* len, DWORD* sehCode) {
+    if (sehCode) *sehCode = 0;
+    __try {
+        return g_i2c_driver_read_ddcci_auto(handle, addr, buf, len);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        if (sehCode) *sehCode = GetExceptionCode();
+        return false;
+    }
+}
 
 void SPM_WriteLog(const std::wstring& msg) {
 #ifdef _DEBUG
@@ -183,11 +309,176 @@ std::wstring GetI2CDevLastErrorText() {
     return Utf8ToWide(err);
 }
 
+std::string BuildI2CDevErrorMessage(const char* action) {
+    std::string message = action ? action : "i2c_dev error";
+    const std::wstring lastError = GetI2CDevLastErrorText();
+    if (!lastError.empty()) {
+        message += ": ";
+        message += WideToAnsi(lastError);
+    }
+    return message;
+}
+
 std::wstring StripI2CDevPrefix(const std::wstring& portName) {
     if (portName.rfind(I2C_DEV_PORT_PREFIX, 0) == 0) {
         return portName.substr(wcslen(I2C_DEV_PORT_PREFIX));
     }
     return portName;
+}
+
+void RememberI2CDevScanName(const std::wstring& normalizedName, const std::wstring& rawName) {
+    if (normalizedName.empty() || rawName.empty()) {
+        return;
+    }
+    g_i2cDevScanNameMap[normalizedName] = rawName;
+}
+
+std::wstring FindRawI2CDevScanName(const std::wstring& normalizedName) {
+    const auto it = g_i2cDevScanNameMap.find(normalizedName);
+    if (it == g_i2cDevScanNameMap.end()) {
+        return {};
+    }
+    return it->second;
+}
+
+std::wstring NormalizeI2CDevDeviceName(const std::wstring& rawName) {
+    std::wstring out;
+    out.reserve(rawName.size());
+
+    bool pendingSpace = false;
+    for (wchar_t ch : rawName) {
+        if (ch == L'\0') {
+            break;
+        }
+
+        if (iswcntrl(static_cast<wint_t>(ch)) || iswspace(static_cast<wint_t>(ch))) {
+            pendingSpace = !out.empty();
+            continue;
+        }
+
+        if (pendingSpace) {
+            if (!out.empty() && out.back() != L'(' && ch != L')') {
+                out.push_back(L' ');
+            }
+            pendingSpace = false;
+        }
+
+        if (ch == L')' && !out.empty() && out.back() == L' ') {
+            out.pop_back();
+        }
+
+        out.push_back(ch);
+    }
+
+    while (!out.empty() && out.back() == L' ') {
+        out.pop_back();
+    }
+    return out;
+}
+
+std::wstring TrimTrailingSpaces(const std::wstring& value) {
+    std::wstring out = value;
+    while (!out.empty() && iswspace(static_cast<wint_t>(out.back()))) {
+        out.pop_back();
+    }
+    return out;
+}
+
+std::wstring RemoveTrailingParentheticalSuffix(const std::wstring& value) {
+    std::wstring trimmed = TrimTrailingSpaces(value);
+    if (trimmed.empty() || trimmed.back() != L')') {
+        return trimmed;
+    }
+
+    const size_t pos = trimmed.find_last_of(L'(');
+    if (pos == std::wstring::npos) {
+        return trimmed;
+    }
+    return TrimTrailingSpaces(trimmed.substr(0, pos));
+}
+
+bool IsDigitsOnly(const std::wstring& value) {
+    if (value.empty()) {
+        return false;
+    }
+    for (wchar_t ch : value) {
+        if (!iswdigit(static_cast<wint_t>(ch))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void AppendUniqueDeviceName(std::vector<std::wstring>& values, const std::wstring& candidate) {
+    if (candidate.empty()) {
+        return;
+    }
+    if (std::find(values.begin(), values.end(), candidate) == values.end()) {
+        values.push_back(candidate);
+    }
+}
+
+std::vector<std::wstring> BuildOpenDeviceCandidates(const std::wstring& deviceName, bool isNvapiBackend) {
+    std::vector<std::wstring> candidates;
+    AppendUniqueDeviceName(candidates, deviceName);
+
+    if (!isNvapiBackend) {
+        return candidates;
+    }
+
+    const std::wstring noMonitorName = RemoveTrailingParentheticalSuffix(deviceName);
+    AppendUniqueDeviceName(candidates, noMonitorName);
+
+    const size_t lastColon = noMonitorName.find_last_of(L':');
+    if (lastColon != std::wstring::npos) {
+        const std::wstring suffix = NormalizeI2CDevDeviceName(noMonitorName.substr(lastColon + 1));
+        if (IsDigitsOnly(suffix)) {
+            AppendUniqueDeviceName(candidates, TrimTrailingSpaces(noMonitorName.substr(0, lastColon)));
+        }
+    }
+
+    const size_t firstColon = deviceName.find(L':');
+    if (firstColon != std::wstring::npos) {
+        AppendUniqueDeviceName(candidates, TrimTrailingSpaces(deviceName.substr(0, firstColon)));
+    }
+
+    return candidates;
+}
+
+std::vector<std::wstring> EnumerateSupportedDeviceNames() {
+    std::vector<std::wstring> names;
+    if (!g_i2cDevContext || !g_i2c_driver_get_supported_device) {
+        return names;
+    }
+
+    int consecutiveFailures = 0;
+    for (int index = 0; index < 64 && consecutiveFailures < 8; ++index) {
+        std::vector<uint8_t> nameBuf(1024, 0);
+        DWORD sehCode = 0;
+        const bool ok = SafeI2CDriverGetSupportedDevice(g_i2cDevContext, index, nameBuf.data(),
+                                                        static_cast<int>(nameBuf.size()), &sehCode);
+        if (sehCode != 0) {
+            SPM_WriteLog(L"EnumerateSupportedDeviceNames: get_supported_device(%d) raised SEH 0x%08X",
+                         index, sehCode);
+            break;
+        }
+
+        if (!ok) {
+            ++consecutiveFailures;
+            continue;
+        }
+
+        consecutiveFailures = 0;
+        nameBuf.back() = 0;
+        std::wstring rawName = Utf8ToWide(reinterpret_cast<const char*>(nameBuf.data()));
+        std::wstring name = NormalizeI2CDevDeviceName(rawName);
+        if (name.empty()) {
+            continue;
+        }
+        AppendUniqueDeviceName(names, name);
+    }
+
+    return names;
 }
 
 bool ContainsNoCase(const std::wstring& text, const wchar_t* needle) {
@@ -206,6 +497,19 @@ bool IsNonFatalCapabilityError(const std::wstring& errorText) {
     return ContainsNoCase(errorText, L"not support") ||
            ContainsNoCase(errorText, L"not supported") ||
            ContainsNoCase(errorText, L"unsupported");
+}
+
+bool IsWriteOnlyPreferredRawBody(const std::vector<uint8_t>& txBody) {
+    if (txBody.size() >= 2 && txBody[0] == 0x01) {
+        return false;
+    }
+    if (txBody.size() >= 4 && txBody[0] == 0x03) {
+        return false;
+    }
+    if (txBody.size() >= 3 && txBody[0] == 0xF3) {
+        return false;
+    }
+    return true;
 }
 
 bool IsValidDDCChecksum(const std::vector<uint8_t>& packet, uint8_t* matchedSeed = nullptr) {
@@ -301,7 +605,11 @@ bool SerialPortManager::EnsureI2CDevReady() {
         return true;
     }
 
-    g_i2cDevContext = g_i2c_driver_init(I2C_DEV_MAGIC);
+    DWORD sehCode = 0;
+    g_i2cDevContext = SafeI2CDriverInit(&sehCode);
+    if (sehCode != 0) {
+        SPM_WriteLog(L"EnsureI2CDevReady: i2c_driver_init raised SEH 0x%08X", sehCode);
+    }
     if (!g_i2cDevContext) {
         SPM_WriteLog(L"EnsureI2CDevReady: i2c_driver_init failed: %s", GetI2CDevLastErrorText().c_str());
         return false;
@@ -321,23 +629,46 @@ std::vector<SerialPortInfo> SerialPortManager::EnumerateI2CDevPorts() {
         return ports;
     }
 
+    g_i2cDevScanNameMap.clear();
+
     intptr_t scanCount = 0;
-    if (g_i2c_driver_scan(g_i2cDevContext, &scanCount)) {
+    DWORD sehCode = 0;
+    const bool scanOk = SafeI2CDriverScan(g_i2cDevContext, &scanCount, &sehCode);
+    if (sehCode != 0) {
+        SPM_WriteLog(L"EnumerateI2CDevPorts: i2c_driver_scan raised SEH 0x%08X", sehCode);
+        return ports;
+    }
+
+    if (scanOk) {
         SPM_WriteLog(L"EnumerateI2CDevPorts: scan succeeded, count=%lld", static_cast<long long>(scanCount));
         for (int index = 0; index < static_cast<int>(scanCount); ++index) {
-            uint8_t nameBuf[256] = {};
-            if (!g_i2c_driver_get_scan_result(g_i2cDevContext, index, nameBuf, static_cast<int>(sizeof(nameBuf)))) {
+            std::vector<uint8_t> nameBuf(4096, 0);
+            sehCode = 0;
+            const bool resultOk = SafeI2CDriverGetScanResult(g_i2cDevContext, index, nameBuf.data(),
+                                                             static_cast<int>(nameBuf.size()), &sehCode);
+            if (sehCode != 0) {
+                SPM_WriteLog(L"EnumerateI2CDevPorts: get_scan_result(%d) raised SEH 0x%08X", index, sehCode);
+                continue;
+            }
+
+            if (!resultOk) {
                 SPM_WriteLog(L"EnumerateI2CDevPorts: get_scan_result(%d) failed: %s",
                              index, GetI2CDevLastErrorText().c_str());
                 continue;
             }
 
-            std::wstring deviceName = Utf8ToWide(reinterpret_cast<const char*>(nameBuf));
-            while (!deviceName.empty() && (deviceName.back() == L'\0' || deviceName.back() == L' ')) {
-                deviceName.pop_back();
-            }
+            nameBuf.back() = 0;
+            const std::wstring rawDeviceName = Utf8ToWide(reinterpret_cast<const char*>(nameBuf.data()));
+            std::wstring deviceName = NormalizeI2CDevDeviceName(rawDeviceName);
             if (deviceName.empty()) {
                 continue;
+            }
+
+            RememberI2CDevScanName(deviceName, rawDeviceName);
+
+            if (deviceName != rawDeviceName) {
+                SPM_WriteLog(L"EnumerateI2CDevPorts: sanitized scan[%d] raw=[%s] normalized=[%s]",
+                             index, rawDeviceName.c_str(), deviceName.c_str());
             }
 
             SerialPortInfo info;
@@ -362,7 +693,8 @@ bool SerialPortManager::OpenI2CDevPort(const std::wstring& portName, DWORD baudR
         return false;
     }
 
-    const std::wstring deviceName = StripI2CDevPrefix(portName);
+    const std::wstring deviceName = NormalizeI2CDevDeviceName(StripI2CDevPrefix(portName));
+    const std::wstring rawScannedDeviceName = FindRawI2CDevScanName(deviceName);
     const bool isVendorGpuBackend = ContainsNoCase(deviceName, L"igcl") ||
                                     ContainsNoCase(deviceName, L"intel") ||
                                     ContainsNoCase(deviceName, L"igfxext") ||
@@ -373,20 +705,87 @@ bool SerialPortManager::OpenI2CDevPort(const std::wstring& portName, DWORD baudR
                                     ContainsNoCase(deviceName, L"nvapi") ||
                                     ContainsNoCase(deviceName, L"nvidia") ||
                                     ContainsNoCase(deviceName, L"geforce");
-    const std::string deviceNameAnsi = WideToAnsi(deviceName);
-    if (deviceNameAnsi.empty()) {
+    const bool isNvapiBackend = ContainsNoCase(deviceName, L"nvapi") ||
+                                ContainsNoCase(deviceName, L"nvidia") ||
+                                ContainsNoCase(deviceName, L"geforce");
+    std::vector<std::wstring> openCandidates;
+    if (isNvapiBackend) {
+        AppendUniqueDeviceName(openCandidates, rawScannedDeviceName);
+    }
+    if (isNvapiBackend && !rawScannedDeviceName.empty() && rawScannedDeviceName != deviceName) {
+        SPM_WriteLog(L"OpenI2CDevPort: raw scan name for %s is [%s]",
+                     deviceName.c_str(), rawScannedDeviceName.c_str());
+    }
+    const std::vector<std::wstring> fallbackCandidates = BuildOpenDeviceCandidates(deviceName, isNvapiBackend);
+    for (const std::wstring& candidate : fallbackCandidates) {
+        AppendUniqueDeviceName(openCandidates, candidate);
+    }
+    if (isNvapiBackend) {
+        const std::vector<std::wstring> supportedDevices = EnumerateSupportedDeviceNames();
+        for (size_t i = 0; i < supportedDevices.size(); ++i) {
+            const std::wstring& supported = supportedDevices[i];
+            SPM_WriteLog(L"OpenI2CDevPort: supported_device[%zu]=%s", i, supported.c_str());
+            if (ContainsNoCase(supported, L"nvapi") ||
+                ContainsNoCase(supported, L"nvidia") ||
+                ContainsNoCase(supported, L"geforce")) {
+                AppendUniqueDeviceName(openCandidates, supported);
+            }
+        }
+    }
+    if (openCandidates.empty()) {
         SPM_WriteLog(L"OpenI2CDevPort: empty device name after conversion");
         return false;
     }
 
-    if (!g_i2c_driver_open(g_i2cDevContext, deviceNameAnsi.c_str())) {
+    std::wstring openedDeviceName;
+    std::wstring openErrorText;
+    for (const std::wstring& candidate : openCandidates) {
+        const std::string deviceNameAnsi = WideToAnsi(candidate);
+        if (deviceNameAnsi.empty()) {
+            continue;
+        }
+
+        SPM_WriteLog(L"OpenI2CDevPort: trying i2c_driver_open(%s)", candidate.c_str());
+        DWORD sehCode = 0;
+        const bool openOk = SafeI2CDriverOpen(g_i2cDevContext, deviceNameAnsi.c_str(), &sehCode);
+        if (sehCode != 0) {
+            SPM_WriteLog(L"OpenI2CDevPort: i2c_driver_open(%s) raised SEH 0x%08X",
+                         candidate.c_str(), sehCode);
+            return false;
+        }
+
+        if (openOk) {
+            openedDeviceName = candidate;
+            break;
+        }
+
+        openErrorText = GetI2CDevLastErrorText();
         SPM_WriteLog(L"OpenI2CDevPort: i2c_driver_open(%s) failed: %s",
-                     deviceName.c_str(), GetI2CDevLastErrorText().c_str());
+                     candidate.c_str(), openErrorText.c_str());
+        const bool canTryNextNvapiCandidate = isNvapiBackend &&
+                                              ContainsNoCase(openErrorText, L"device not found at open");
+        if (!canTryNextNvapiCandidate && candidate != openCandidates.back()) {
+            SPM_WriteLog(L"OpenI2CDevPort: candidate failed for %s, continue with next candidate",
+                         deviceName.c_str());
+        }
+    }
+
+    if (openedDeviceName.empty()) {
         return false;
     }
 
     uint32_t speed = (baudRate > 0 && baudRate <= 1000) ? (1000u / baudRate) : 100000u;
-    if (!g_i2c_driver_set_speed(g_i2cDevContext, speed)) {
+    DWORD sehCode = 0;
+    const bool speedOk = SafeI2CDriverSetSpeed(g_i2cDevContext, speed, &sehCode);
+    if (sehCode != 0) {
+        SPM_WriteLog(L"OpenI2CDevPort: i2c_driver_set_speed(%u) raised SEH 0x%08X", speed, sehCode);
+        if (g_i2c_driver_close) {
+            g_i2c_driver_close(g_i2cDevContext);
+        }
+        return false;
+    }
+
+    if (!speedOk) {
         const std::wstring speedError = GetI2CDevLastErrorText();
         if (isVendorGpuBackend && IsNonFatalCapabilityError(speedError)) {
             SPM_WriteLog(L"OpenI2CDevPort: i2c_driver_set_speed(%u) unsupported for %s, continue without speed config",
@@ -394,12 +793,24 @@ bool SerialPortManager::OpenI2CDevPort(const std::wstring& portName, DWORD baudR
         } else {
             SPM_WriteLog(L"OpenI2CDevPort: i2c_driver_set_speed(%u) failed: %s",
                          speed, speedError.c_str());
-            g_i2c_driver_close(g_i2cDevContext);
+            if (g_i2c_driver_close) {
+                g_i2c_driver_close(g_i2cDevContext);
+            }
             return false;
         }
     }
 
-    if (!g_i2c_driver_set_enable_bulk(g_i2cDevContext, false)) {
+    sehCode = 0;
+    const bool bulkOk = SafeI2CDriverSetEnableBulk(g_i2cDevContext, false, &sehCode);
+    if (sehCode != 0) {
+        SPM_WriteLog(L"OpenI2CDevPort: i2c_driver_set_enable_bulk(false) raised SEH 0x%08X", sehCode);
+        if (g_i2c_driver_close) {
+            g_i2c_driver_close(g_i2cDevContext);
+        }
+        return false;
+    }
+
+    if (!bulkOk) {
         const std::wstring bulkError = GetI2CDevLastErrorText();
         if (isVendorGpuBackend && IsNonFatalCapabilityError(bulkError)) {
             SPM_WriteLog(L"OpenI2CDevPort: i2c_driver_set_enable_bulk(false) unsupported for %s, continue without bulk config",
@@ -407,13 +818,16 @@ bool SerialPortManager::OpenI2CDevPort(const std::wstring& portName, DWORD baudR
         } else {
             SPM_WriteLog(L"OpenI2CDevPort: i2c_driver_set_enable_bulk(false) failed: %s",
                          bulkError.c_str());
-            g_i2c_driver_close(g_i2cDevContext);
+            if (g_i2c_driver_close) {
+                g_i2c_driver_close(g_i2cDevContext);
+            }
             return false;
         }
     }
 
-    m_deviceName = portName;
-    SPM_WriteLog(L"OpenI2CDevPort: %s opened via i2c_dev (speed=%u)", deviceName.c_str(), speed);
+    m_deviceName = std::wstring(I2C_DEV_PORT_PREFIX) + deviceName;
+    SPM_WriteLog(L"OpenI2CDevPort: %s opened via i2c_dev using candidate [%s] (speed=%u)",
+                 deviceName.c_str(), openedDeviceName.c_str(), speed);
     return true;
 }
 
@@ -425,8 +839,12 @@ bool SerialPortManager::OpenPort(const std::wstring& portName, DWORD baudRate) {
 void SerialPortManager::ClosePort() {
     if (!m_deviceName.empty() && g_i2cDevContext && g_i2c_driver_close) {
         std::wstring opened = StripI2CDevPrefix(m_deviceName);
-        g_i2c_driver_close(g_i2cDevContext);
-        SPM_WriteLog(L"ClosePort: %s closed via i2c_dev", opened.c_str());
+        DWORD sehCode = 0;
+        if (SafeI2CDriverClose(g_i2cDevContext, &sehCode)) {
+            SPM_WriteLog(L"ClosePort: %s closed via i2c_dev", opened.c_str());
+        } else if (sehCode != 0) {
+            SPM_WriteLog(L"ClosePort: i2c_driver_close(%s) raised SEH 0x%08X", opened.c_str(), sehCode);
+        }
     }
     m_deviceName.clear();
 }
@@ -518,6 +936,7 @@ bool SerialPortManager::ExtractFirstValidDDCReply(const std::vector<uint8_t>& ra
         return false;
     }
 
+    std::string lastCandidateReason;
     const size_t searchLimit = (std::min)(rawData.size(), static_cast<size_t>(32));
     for (size_t start = 0; start + 4 <= searchLimit; ++start) {
         if (rawData[start] != DDC_WRITE_ADDR) {
@@ -541,6 +960,41 @@ bool SerialPortManager::ExtractFirstValidDDCReply(const std::vector<uint8_t>& ra
             reason.clear();
             return true;
         }
+        lastCandidateReason = candidateReason;
+    }
+
+    // Some GPU backends return the DDC payload without the leading 0x6E target byte.
+    // Normalize that shortened form back into a canonical DDC reply packet.
+    for (size_t start = 0; start + 3 <= searchLimit; ++start) {
+        const uint8_t lenByte = rawData[start];
+        if ((lenByte & 0x80) == 0) {
+            continue;
+        }
+
+        const size_t packetSizeWithoutTarget = static_cast<size_t>(lenByte & 0x7F) + 2;
+        if (start + packetSizeWithoutTarget > rawData.size()) {
+            continue;
+        }
+
+        std::vector<uint8_t> candidate;
+        candidate.reserve(packetSizeWithoutTarget + 1);
+        candidate.push_back(DDC_WRITE_ADDR);
+        candidate.insert(candidate.end(),
+                         rawData.begin() + start,
+                         rawData.begin() + start + packetSizeWithoutTarget);
+
+        std::string candidateReason;
+        if (IsValidDDCReply(candidate, candidateReason)) {
+            packet = std::move(candidate);
+            reason.clear();
+            return true;
+        }
+        lastCandidateReason = candidateReason;
+    }
+
+    if (!lastCandidateReason.empty()) {
+        reason += ": ";
+        reason += lastCandidateReason;
     }
 
     return false;
@@ -564,10 +1018,20 @@ bool SerialPortManager::DDCSendRawI2CDevWriteReadRestart(const std::vector<uint8
                  static_cast<long long>(rxLen),
                  BytesToHex(txPacket).c_str());
 
-    if (!g_i2c_driver_write_read_restart(g_i2cDevContext, DDC_7BIT_ADDR, const_cast<uint8_t*>(txPacket.data()),
-                                         &txLen, &rxLen, readBuf.data())) {
-        SPM_WriteLog(L"DDCSendRawI2CDev[restart]: failed, err=%s", GetI2CDevLastErrorText().c_str());
-        error = "i2c_driver_write_read_restart failed";
+    DWORD sehCode = 0;
+    const bool restartOk = SafeI2CDriverWriteReadRestart(g_i2cDevContext, DDC_7BIT_ADDR,
+                                                         const_cast<uint8_t*>(txPacket.data()),
+                                                         &txLen, &rxLen, readBuf.data(), &sehCode);
+    if (sehCode != 0) {
+        SPM_WriteLog(L"DDCSendRawI2CDev[restart]: i2c_driver_write_read_restart raised SEH 0x%08X", sehCode);
+        error = "i2c_driver_write_read_restart raised SEH";
+        return false;
+    }
+
+    if (!restartOk) {
+        const std::wstring lastError = GetI2CDevLastErrorText();
+        SPM_WriteLog(L"DDCSendRawI2CDev[restart]: failed, err=%s", lastError.c_str());
+        error = BuildI2CDevErrorMessage("i2c_driver_write_read_restart failed");
         return false;
     }
 
@@ -599,10 +1063,20 @@ bool SerialPortManager::DDCSendRawI2CDevWriteThenRead(const std::vector<uint8_t>
     intptr_t txLen = static_cast<intptr_t>(txPacket.size());
     SPM_WriteLog(L"DDCSendRawI2CDev[write/read]: write addr=0x%02X len=%lld data=[%s]",
                  DDC_7BIT_ADDR, static_cast<long long>(txLen), BytesToHex(txPacket).c_str());
-    if (!g_i2c_driver_write(g_i2cDevContext, DDC_7BIT_ADDR, const_cast<uint8_t*>(txPacket.data()), &txLen)) {
+    DWORD sehCode = 0;
+    const bool writeOk = SafeI2CDriverWrite(g_i2cDevContext, DDC_7BIT_ADDR,
+                                            const_cast<uint8_t*>(txPacket.data()), &txLen, &sehCode);
+    if (sehCode != 0) {
+        SPM_WriteLog(L"DDCSendRawI2CDev[write/read]: i2c_driver_write raised SEH 0x%08X", sehCode);
+        error = "i2c_driver_write raised SEH";
+        return false;
+    }
+
+    if (!writeOk) {
+        const std::wstring lastError = GetI2CDevLastErrorText();
         SPM_WriteLog(L"DDCSendRawI2CDev[write/read]: i2c_driver_write failed, err=%s",
-                     GetI2CDevLastErrorText().c_str());
-        error = "i2c_driver_write failed";
+                     lastError.c_str());
+        error = BuildI2CDevErrorMessage("i2c_driver_write failed");
         return false;
     }
 
@@ -613,10 +1087,19 @@ bool SerialPortManager::DDCSendRawI2CDevWriteThenRead(const std::vector<uint8_t>
     intptr_t rxLen = static_cast<intptr_t>(readBuf.size());
     SPM_WriteLog(L"DDCSendRawI2CDev[write/read]: read addr=0x%02X requestCapacity=%lld",
                  DDC_7BIT_ADDR, static_cast<long long>(rxLen));
-    if (!g_i2c_driver_read(g_i2cDevContext, DDC_7BIT_ADDR, readBuf.data(), &rxLen)) {
+    sehCode = 0;
+    const bool readOk = SafeI2CDriverRead(g_i2cDevContext, DDC_7BIT_ADDR, readBuf.data(), &rxLen, &sehCode);
+    if (sehCode != 0) {
+        SPM_WriteLog(L"DDCSendRawI2CDev[write/read]: i2c_driver_read raised SEH 0x%08X", sehCode);
+        error = "i2c_driver_read raised SEH";
+        return false;
+    }
+
+    if (!readOk) {
+        const std::wstring lastError = GetI2CDevLastErrorText();
         SPM_WriteLog(L"DDCSendRawI2CDev[write/read]: i2c_driver_read failed, err=%s",
-                     GetI2CDevLastErrorText().c_str());
-        error = "i2c_driver_read failed";
+                     lastError.c_str());
+        error = BuildI2CDevErrorMessage("i2c_driver_read failed");
         return false;
     }
 
@@ -653,10 +1136,20 @@ bool SerialPortManager::DDCSendRawI2CDevWriteThenAutoRead(const std::vector<uint
     intptr_t txLen = static_cast<intptr_t>(txPacket.size());
     SPM_WriteLog(L"DDCSendRawI2CDev[auto-read]: write addr=0x%02X len=%lld data=[%s]",
                  DDC_7BIT_ADDR, static_cast<long long>(txLen), BytesToHex(txPacket).c_str());
-    if (!g_i2c_driver_write(g_i2cDevContext, DDC_7BIT_ADDR, const_cast<uint8_t*>(txPacket.data()), &txLen)) {
+    DWORD sehCode = 0;
+    const bool writeOk = SafeI2CDriverWrite(g_i2cDevContext, DDC_7BIT_ADDR,
+                                            const_cast<uint8_t*>(txPacket.data()), &txLen, &sehCode);
+    if (sehCode != 0) {
+        SPM_WriteLog(L"DDCSendRawI2CDev[auto-read]: i2c_driver_write raised SEH 0x%08X", sehCode);
+        error = "i2c_driver_write raised SEH";
+        return false;
+    }
+
+    if (!writeOk) {
+        const std::wstring lastError = GetI2CDevLastErrorText();
         SPM_WriteLog(L"DDCSendRawI2CDev[auto-read]: i2c_driver_write failed, err=%s",
-                     GetI2CDevLastErrorText().c_str());
-        error = "i2c_driver_write failed";
+                     lastError.c_str());
+        error = BuildI2CDevErrorMessage("i2c_driver_write failed");
         return false;
     }
 
@@ -664,10 +1157,20 @@ bool SerialPortManager::DDCSendRawI2CDevWriteThenAutoRead(const std::vector<uint
     uint8_t rxLen = static_cast<uint8_t>(readBuf.size());
     SPM_WriteLog(L"DDCSendRawI2CDev[auto-read]: read_ddcci_auto addr=0x%02X requestCapacity=%u",
                  DDC_7BIT_ADDR, static_cast<unsigned>(rxLen));
-    if (!g_i2c_driver_read_ddcci_auto(g_i2cDevContext, DDC_7BIT_ADDR, readBuf.data(), &rxLen)) {
+    sehCode = 0;
+    const bool autoReadOk = SafeI2CDriverReadDdcciAuto(g_i2cDevContext, DDC_7BIT_ADDR,
+                                                       readBuf.data(), &rxLen, &sehCode);
+    if (sehCode != 0) {
+        SPM_WriteLog(L"DDCSendRawI2CDev[auto-read]: i2c_driver_read_ddcci_auto raised SEH 0x%08X", sehCode);
+        error = "i2c_driver_read_ddcci_auto raised SEH";
+        return false;
+    }
+
+    if (!autoReadOk) {
+        const std::wstring lastError = GetI2CDevLastErrorText();
         SPM_WriteLog(L"DDCSendRawI2CDev[auto-read]: i2c_driver_read_ddcci_auto failed, err=%s",
-                     GetI2CDevLastErrorText().c_str());
-        error = "i2c_driver_read_ddcci_auto failed";
+                     lastError.c_str());
+        error = BuildI2CDevErrorMessage("i2c_driver_read_ddcci_auto failed");
         return false;
     }
 
@@ -688,6 +1191,124 @@ bool SerialPortManager::DDCSendRawI2CDevWriteThenAutoRead(const std::vector<uint
     SPM_WriteLog(L"DDCSendRawI2CDev[auto-read]: read ok len=%zu raw=[%s]",
                  rxData.size(), BytesToHex(rxData).c_str());
     return true;
+}
+
+bool SerialPortManager::DDCSendRawI2CDevWriteOnly(const std::vector<uint8_t>& txPacket,
+                                                  std::string& error) {
+    intptr_t txLen = static_cast<intptr_t>(txPacket.size());
+    SPM_WriteLog(L"DDCSendRawI2CDev[write-only]: write addr=0x%02X len=%lld data=[%s]",
+                 DDC_7BIT_ADDR, static_cast<long long>(txLen), BytesToHex(txPacket).c_str());
+
+    DWORD sehCode = 0;
+    const bool writeOk = SafeI2CDriverWrite(g_i2cDevContext, DDC_7BIT_ADDR,
+                                            const_cast<uint8_t*>(txPacket.data()), &txLen, &sehCode);
+    if (sehCode != 0) {
+        SPM_WriteLog(L"DDCSendRawI2CDev[write-only]: i2c_driver_write raised SEH 0x%08X", sehCode);
+        error = "i2c_driver_write raised SEH";
+        return false;
+    }
+
+    if (!writeOk) {
+        const std::wstring lastError = GetI2CDevLastErrorText();
+        SPM_WriteLog(L"DDCSendRawI2CDev[write-only]: i2c_driver_write failed, err=%s",
+                     lastError.c_str());
+        error = BuildI2CDevErrorMessage("i2c_driver_write failed");
+        return false;
+    }
+
+    SPM_WriteLog(L"DDCSendRawI2CDev[write-only]: write ok, transferred=%lld",
+                 static_cast<long long>(txLen));
+    error.clear();
+    return true;
+}
+
+bool SerialPortManager::DDCReadReplyI2CDevAfterWrite(std::vector<uint8_t>& rxData,
+                                                     std::string& error) {
+    rxData.clear();
+    Sleep(DDC_REPLY_DELAY_MS);
+
+    std::string readError;
+    {
+        std::vector<uint8_t> readBuf(512, 0);
+        intptr_t rxLen = static_cast<intptr_t>(readBuf.size());
+        SPM_WriteLog(L"DDCReadReplyI2CDevAfterWrite[read]: addr=0x%02X requestCapacity=%lld",
+                     DDC_7BIT_ADDR, static_cast<long long>(rxLen));
+
+        DWORD sehCode = 0;
+        const bool readOk = SafeI2CDriverRead(g_i2cDevContext, DDC_7BIT_ADDR, readBuf.data(), &rxLen, &sehCode);
+        if (sehCode != 0) {
+            SPM_WriteLog(L"DDCReadReplyI2CDevAfterWrite[read]: i2c_driver_read raised SEH 0x%08X", sehCode);
+            readError = "i2c_driver_read raised SEH";
+        } else if (!readOk) {
+            const std::wstring lastError = GetI2CDevLastErrorText();
+            SPM_WriteLog(L"DDCReadReplyI2CDevAfterWrite[read]: i2c_driver_read failed, err=%s",
+                         lastError.c_str());
+            readError = BuildI2CDevErrorMessage("i2c_driver_read failed");
+        } else if (rxLen <= 0) {
+            SPM_WriteLog(L"DDCReadReplyI2CDevAfterWrite[read]: read returned no data");
+            readError = "i2c_driver_read returned no data";
+        } else {
+            if (rxLen > static_cast<intptr_t>(readBuf.size())) {
+                rxLen = static_cast<intptr_t>(readBuf.size());
+            }
+            std::vector<uint8_t> rawData(readBuf.begin(), readBuf.begin() + static_cast<size_t>(rxLen));
+            if (ExtractFirstValidDDCReply(rawData, rxData, readError)) {
+                SPM_WriteLog(L"DDCReadReplyI2CDevAfterWrite[read]: read ok len=%zu raw=[%s]",
+                             rxData.size(), BytesToHex(rxData).c_str());
+                error.clear();
+                return true;
+            }
+
+            SPM_WriteLog(L"DDCReadReplyI2CDevAfterWrite[read]: invalid reply: %S raw=[%s]",
+                         readError.c_str(), BytesToHex(rawData).c_str());
+        }
+    }
+
+    if (g_i2c_driver_read_ddcci_auto) {
+        std::vector<uint8_t> readBuf(255, 0);
+        uint8_t rxLen = static_cast<uint8_t>(readBuf.size());
+        SPM_WriteLog(L"DDCReadReplyI2CDevAfterWrite[auto-read]: addr=0x%02X requestCapacity=%u",
+                     DDC_7BIT_ADDR, static_cast<unsigned>(rxLen));
+
+        DWORD sehCode = 0;
+        const bool autoReadOk = SafeI2CDriverReadDdcciAuto(g_i2cDevContext, DDC_7BIT_ADDR,
+                                                           readBuf.data(), &rxLen, &sehCode);
+        if (sehCode != 0) {
+            SPM_WriteLog(L"DDCReadReplyI2CDevAfterWrite[auto-read]: i2c_driver_read_ddcci_auto raised SEH 0x%08X",
+                         sehCode);
+            error = readError + "; i2c_driver_read_ddcci_auto raised SEH";
+            return false;
+        }
+
+        if (!autoReadOk) {
+            const std::wstring lastError = GetI2CDevLastErrorText();
+            SPM_WriteLog(L"DDCReadReplyI2CDevAfterWrite[auto-read]: i2c_driver_read_ddcci_auto failed, err=%s",
+                         lastError.c_str());
+            error = readError + "; " + BuildI2CDevErrorMessage("i2c_driver_read_ddcci_auto failed");
+            return false;
+        }
+
+        if (rxLen == 0) {
+            SPM_WriteLog(L"DDCReadReplyI2CDevAfterWrite[auto-read]: auto-read returned no data");
+            error = readError + "; i2c_driver_read_ddcci_auto returned no data";
+            return false;
+        }
+
+        std::vector<uint8_t> rawData(readBuf.begin(), readBuf.begin() + static_cast<size_t>(rxLen));
+        if (ExtractFirstValidDDCReply(rawData, rxData, error)) {
+            SPM_WriteLog(L"DDCReadReplyI2CDevAfterWrite[auto-read]: read ok len=%zu raw=[%s]",
+                         rxData.size(), BytesToHex(rxData).c_str());
+            return true;
+        }
+
+        SPM_WriteLog(L"DDCReadReplyI2CDevAfterWrite[auto-read]: invalid reply: %S raw=[%s]",
+                     error.c_str(), BytesToHex(rawData).c_str());
+        error = readError + "; auto-read failed: " + error;
+        return false;
+    }
+
+    error = readError;
+    return false;
 }
 
 bool SerialPortManager::DDCSendRawI2CDev(const std::vector<uint8_t>& txBody,
@@ -711,15 +1332,40 @@ bool SerialPortManager::DDCSendRawI2CDev(const std::vector<uint8_t>& txBody,
     txPacket.insert(txPacket.end(), txBody.begin(), txBody.end());
     txPacket.push_back(checksum);
 
+    const std::wstring deviceName = StripI2CDevPrefix(m_deviceName);
+    const bool isNvapiDevice = ContainsNoCase(deviceName, L"nvapi") ||
+                               ContainsNoCase(deviceName, L"nvidia") ||
+                               ContainsNoCase(deviceName, L"geforce");
+    const bool isWriteOnlyBody = IsWriteOnlyPreferredRawBody(txBody);
+    if (isWriteOnlyBody && isNvapiDevice) {
+        SPM_WriteLog(L"DDCSendRawI2CDev: trying write-only path for NVAPI raw body on %s",
+                     deviceName.c_str());
+        if (DDCSendRawI2CDevWriteOnly(txPacket, error)) {
+            std::string replyError;
+            if (DDCReadReplyI2CDevAfterWrite(rxData, replyError)) {
+                return true;
+            }
+
+            SPM_WriteLog(L"DDCSendRawI2CDev: NVAPI write succeeded but reply read failed for %s, treat as no-reply success. err=%S",
+                         deviceName.c_str(), replyError.c_str());
+            error.clear();
+            rxData.clear();
+            return true;
+        }
+        SPM_WriteLog(L"DDCSendRawI2CDev: write-only path failed for %s, fallback to restart path. err=%S",
+                     deviceName.c_str(), error.c_str());
+    }
+
     const bool preferRestartPath = IsRestartPreferredDevice();
     const bool preferAutoReadPath = IsAutoReadPreferredDevice();
     if (preferRestartPath) {
-        SPM_WriteLog(L"DDCSendRawI2CDev: using restart-preferred path for %s", StripI2CDevPrefix(m_deviceName).c_str());
-        if (DDCSendRawI2CDevWriteReadRestart(txPacket, rxData, error)) {
+        SPM_WriteLog(L"DDCSendRawI2CDev: using restart-preferred path for %s", deviceName.c_str());
+        std::string restartError;
+        if (DDCSendRawI2CDevWriteReadRestart(txPacket, rxData, restartError)) {
             return true;
         }
         SPM_WriteLog(L"DDCSendRawI2CDev: write_read_restart failed, fallback to alternate read path. err=%S",
-                     error.c_str());
+                     restartError.c_str());
 
         if (preferAutoReadPath) {
             std::string autoReadError;
@@ -727,6 +1373,9 @@ bool SerialPortManager::DDCSendRawI2CDev(const std::vector<uint8_t>& txBody,
                 return true;
             }
             SPM_WriteLog(L"DDCSendRawI2CDev: auto-read fallback failed, err=%S", autoReadError.c_str());
+            error = restartError + "; auto-read fallback failed: " + autoReadError;
+        } else {
+            error = restartError;
         }
     }
 

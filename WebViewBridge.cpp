@@ -11,6 +11,22 @@
 
 namespace {
 
+    const wchar_t* GetPreferredI2CDllFileName() {
+#ifdef _WIN64
+        return L"i2c_dev.dll";
+#else
+        return L"i2c_dev_ng.dll";
+#endif
+    }
+
+    int GetPreferredI2CDllResourceId() {
+#ifdef _WIN64
+        return IDR_I2C_DEV_DLL;
+#else
+        return IDR_I2C_DEV_NG_DLL;
+#endif
+    }
+
     std::string WideToUtf8(const std::wstring& w) {
         if (w.empty()) return std::string();
         int len = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()),
@@ -19,6 +35,17 @@ namespace {
         std::string out(len, '\0');
         WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()),
                             &out[0], len, nullptr, nullptr);
+        return out;
+    }
+
+    std::wstring Utf8ToWideLocal(const std::string& s) {
+        if (s.empty()) return std::wstring();
+        int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()),
+                                      nullptr, 0);
+        if (len <= 0) return std::wstring();
+        std::wstring out(static_cast<size_t>(len), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()),
+                            &out[0], len);
         return out;
     }
 
@@ -198,6 +225,44 @@ namespace {
         std::vector<uint8_t> payload;
     };
 
+    struct RawCommandOutput {
+        std::wstring txHex;
+        std::wstring rxHex;
+        std::wstring parseInfo;
+    };
+
+    std::vector<uint8_t> ParseHexStringLocal(const std::wstring& hex) {
+        std::vector<uint8_t> bytes;
+        const WCHAR* p = hex.c_str();
+        while (*p) {
+            while (*p == L' ') p++;
+            if (!*p) break;
+
+            unsigned int val = 0;
+            for (int i = 0; i < 2; ++i) {
+                WCHAR ch = *p++;
+                if (ch >= L'0' && ch <= L'9') val = (val << 4) | (ch - L'0');
+                else if (ch >= L'A' && ch <= L'F') val = (val << 4) | (ch - L'A' + 10);
+                else if (ch >= L'a' && ch <= L'f') val = (val << 4) | (ch - L'a' + 10);
+                else return bytes;
+            }
+
+            bytes.push_back(static_cast<uint8_t>(val));
+        }
+        return bytes;
+    }
+
+    std::wstring BytesToHexStrLocal(const std::vector<uint8_t>& bytes) {
+        std::wostringstream ss;
+        for (size_t i = 0; i < bytes.size(); ++i) {
+            if (i > 0) ss << L' ';
+            WCHAR h[4];
+            swprintf_s(h, L"%02X", bytes[i]);
+            ss << h;
+        }
+        return ss.str();
+    }
+
     ParsedSerialReply ParseSerialReplyPacket(const std::vector<uint8_t>& packet) {
         ParsedSerialReply out;
 
@@ -273,6 +338,173 @@ namespace {
         size_t end = json.find(L'"', pos);
         if (end == std::wstring::npos) return L"";
         return json.substr(pos, end - pos);
+    }
+
+    bool ContainsNoCaseLocal(const std::wstring& text, const wchar_t* needle) {
+        if (!needle || !*needle) return false;
+
+        std::wstring haystack = text;
+        std::wstring probe = needle;
+        std::transform(haystack.begin(), haystack.end(), haystack.begin(), towlower);
+        std::transform(probe.begin(), probe.end(), probe.begin(), towlower);
+        return haystack.find(probe) != std::wstring::npos;
+    }
+
+    std::wstring NormalizeForMatch(const std::wstring& text) {
+        std::wstring out;
+        out.reserve(text.size());
+        for (wchar_t ch : text) {
+            if (std::iswalnum(static_cast<wint_t>(ch))) {
+                out.push_back(static_cast<wchar_t>(std::towlower(static_cast<wint_t>(ch))));
+            }
+        }
+        return out;
+    }
+
+    bool IsNvapiSerialPortName(const std::wstring& portName) {
+        return ContainsNoCaseLocal(portName, L"nvapi") ||
+               ContainsNoCaseLocal(portName, L"nvidia") ||
+               ContainsNoCaseLocal(portName, L"geforce");
+    }
+
+    std::wstring ExtractMonitorHintFromSerialPortName(const std::wstring& portName) {
+        if (!IsNvapiSerialPortName(portName)) {
+            return {};
+        }
+
+        const size_t closePos = portName.find_last_of(L')');
+        if (closePos == std::wstring::npos) {
+            return {};
+        }
+
+        const size_t openPos = portName.find_last_of(L'(', closePos);
+        if (openPos == std::wstring::npos || openPos + 1 >= closePos) {
+            return {};
+        }
+
+        return portName.substr(openPos + 1, closePos - openPos - 1);
+    }
+
+    int FindProxyMonitorIndex(MonitorManager* monitorMgr, const std::wstring& portName) {
+        if (!monitorMgr || !IsNvapiSerialPortName(portName)) {
+            return -1;
+        }
+
+        const std::wstring hint = ExtractMonitorHintFromSerialPortName(portName);
+        const std::wstring normalizedHint = NormalizeForMatch(hint);
+        const std::wstring normalizedPort = NormalizeForMatch(portName);
+
+        for (int index = 0; index < monitorMgr->GetMonitorCount(); ++index) {
+            const MonitorInfo* mon = monitorMgr->GetMonitor(index);
+            if (!mon) {
+                continue;
+            }
+
+            const std::wstring normalizedMonitorName = NormalizeForMatch(mon->name);
+            if (normalizedMonitorName.empty()) {
+                continue;
+            }
+
+            if (!normalizedHint.empty() && normalizedMonitorName == normalizedHint) {
+                return index;
+            }
+
+            if (!normalizedHint.empty() &&
+                (normalizedMonitorName.find(normalizedHint) != std::wstring::npos ||
+                 normalizedHint.find(normalizedMonitorName) != std::wstring::npos)) {
+                return index;
+            }
+
+            if (normalizedPort.find(normalizedMonitorName) != std::wstring::npos) {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    bool BuildMonitorRawCommandOutput(MonitorManager* monitorMgr,
+                                      int monitorIndex,
+                                      const std::wstring& bodyHex,
+                                      RawCommandOutput& output,
+                                      std::wstring& error) {
+        output = {};
+        error.clear();
+
+        if (!monitorMgr || !monitorMgr->GetMonitor(monitorIndex)) {
+            error = L"Monitor not found";
+            return false;
+        }
+
+        std::vector<uint8_t> body = ParseHexStringLocal(bodyHex);
+        if (body.empty()) {
+            error = L"Invalid hex body";
+            return false;
+        }
+
+        std::vector<uint8_t> tx = {0x6E, 0x51};
+        tx.push_back(static_cast<uint8_t>(0x80 | (body.size() & 0x7F)));
+        for (auto b : body) tx.push_back(b);
+        tx.push_back(ChkXor(tx));
+
+        output.txHex = BytesToHexStrLocal(tx);
+
+        if (body.size() >= 2 && body[0] == 0x01) {
+            const uint8_t vcp = body[1];
+            const auto feat = monitorMgr->GetVCPFeature(monitorIndex, vcp);
+            output.rxHex = BuildVCPGetRecvHex(vcp, feat.current, feat.max);
+
+            std::wostringstream info;
+            info << L"GetVCP " << std::hex << std::uppercase << static_cast<int>(vcp)
+                 << L": current=" << std::dec << feat.current
+                 << L", max=" << feat.max;
+            if (!feat.valid) {
+                info << L" (fallback)";
+            }
+            output.parseInfo = info.str();
+            return true;
+        }
+
+        if (body.size() >= 4 && body[0] == 0x03) {
+            const uint8_t vcp = body[1];
+            const uint32_t value = (static_cast<uint32_t>(body[2]) << 8) | body[3];
+            monitorMgr->SetVCP(monitorIndex, vcp, value);
+            output.rxHex = BuildVCPSetRecvHex();
+
+            std::wostringstream info;
+            info << L"SetVCP " << std::hex << std::uppercase << static_cast<int>(vcp)
+                 << L" = " << std::dec << value
+                 << L" (fallback)";
+            output.parseInfo = info.str();
+            return true;
+        }
+
+        if (body.size() >= 3 && body[0] == 0xF3) {
+            const auto caps = monitorMgr->GetCapabilities(monitorIndex);
+            const std::string capsStr = WideToUtf8(caps);
+            output.rxHex = BuildCapsRecvHex(capsStr);
+
+            output.parseInfo = L"Capabilities (fallback): ";
+            output.parseInfo += caps.substr(0, 80);
+            if (caps.length() > 80) output.parseInfo += L"...";
+            return true;
+        }
+
+        output.parseInfo = L"Unknown command - display only (DXVA2 fallback)";
+        return true;
+    }
+
+    bool IsDxva2ProxySupportedRawBody(const std::vector<uint8_t>& body) {
+        if (body.size() >= 2 && body[0] == 0x01) {
+            return true;
+        }
+        if (body.size() >= 4 && body[0] == 0x03) {
+            return true;
+        }
+        if (body.size() >= 3 && body[0] == 0xF3) {
+            return true;
+        }
+        return false;
     }
 }
 
@@ -353,6 +585,8 @@ namespace {
 
 void WebViewBridge::ExtractWebResources(HINSTANCE hInstance) {
     (void)hInstance; // resources are in the current module
+    const std::wstring preferredDllName = GetPreferredI2CDllFileName();
+    const int preferredDllResourceId = GetPreferredI2CDllResourceId();
 
     // Check if web/ exists next to the exe (dev mode with copied files)
     std::wstring devWebDir = []() {
@@ -365,16 +599,21 @@ void WebViewBridge::ExtractWebResources(HINSTANCE hInstance) {
         return dir + L"\\web";
     }();
 
+    const std::wstring devBaseDir = devWebDir.substr(0, devWebDir.size() - 4);
     DWORD devAttr = GetFileAttributesW((devWebDir + L"\\index.html").c_str());
-    if (devAttr != INVALID_FILE_ATTRIBUTES) {
-        // web/ folder exists alongside exe — use it directly (Debug/dev mode)
+    const bool hasDevWeb = (devAttr != INVALID_FILE_ATTRIBUTES);
+    if (hasDevWeb) {
         m_webDir = devWebDir;
-        m_dataDir = devWebDir.substr(0, devWebDir.size() - 4) + L"WV2Data";
-        // In dev mode, DLL is expected next to the exe
-        m_dllDir = devWebDir.substr(0, devWebDir.size() - 4);
+        m_dataDir = devBaseDir + L"WV2Data";
+        m_dllDir = devBaseDir;
+    }
 
+    const std::wstring devDllPath = devBaseDir + L"\\" + preferredDllName;
+    const DWORD devDllAttr = GetFileAttributesW(devDllPath.c_str());
+    if (hasDevWeb && devDllAttr != INVALID_FILE_ATTRIBUTES) {
+        // web/ folder exists alongside exe — use it directly (Debug/dev mode)
         if (m_serialMgr) {
-            m_serialMgr->LoadI2CDev(m_dllDir + L"\\i2c_dev.dll");
+            m_serialMgr->LoadI2CDev(devDllPath);
         }
         return;
     }
@@ -395,7 +634,9 @@ void WebViewBridge::ExtractWebResources(HINSTANCE hInstance) {
     // Create directory (ignore errors if it already exists)
     CreateDirectoryW(baseDir.c_str(), nullptr);
     CreateDirectoryW(extractDir.c_str(), nullptr);
-    m_dataDir = baseDir + L"\\WV2Data";
+    if (!hasDevWeb) {
+        m_dataDir = baseDir + L"\\WV2Data";
+    }
 
     static const WebResourceEntry entries[] = {
         { IDR_WEB_INDEX_HTML, L"index.html" },
@@ -432,7 +673,7 @@ void WebViewBridge::ExtractWebResources(HINSTANCE hInstance) {
         int resourceId;
         const wchar_t* fileName;
     } dllEntries[] = {
-        { IDR_I2C_DEV_DLL, L"i2c_dev.dll" },
+        { preferredDllResourceId, preferredDllName.c_str() },
     };
 
     for (const auto& dllEntry : dllEntries) {
@@ -458,10 +699,12 @@ void WebViewBridge::ExtractWebResources(HINSTANCE hInstance) {
     }
 
     if (m_serialMgr) {
-        m_serialMgr->LoadI2CDev(baseDir + L"\\i2c_dev.dll");
+        m_serialMgr->LoadI2CDev(baseDir + L"\\" + preferredDllName);
     }
 
-    m_webDir = extractDir;
+    if (!hasDevWeb) {
+        m_webDir = extractDir;
+    }
 }
 
 HRESULT WebViewBridge::Initialize(HWND hwnd) {
@@ -838,66 +1081,17 @@ static std::wstring BytesToHexStr(const std::vector<uint8_t>& bytes) {
 }
 
 std::wstring WebViewBridge::BuildRawCommandResponse(int monitorIndex, const std::wstring& bodyHex) {
-    auto* mon = m_monitorMgr->GetMonitor(monitorIndex);
-    if (!mon) return BuildError(L"Monitor not found");
-
-    std::vector<uint8_t> body = ParseHexString(bodyHex);
-    if (body.empty()) return BuildError(L"Invalid hex body");
-
-    // Build full TX packet: [6E] [51] [LEN=0x80|body.size()] [body...] [CHK]
-    std::vector<uint8_t> tx = {0x6E, 0x51};
-    tx.push_back(static_cast<uint8_t>(0x80 | (body.size() & 0x7F)));
-    for (auto b : body) tx.push_back(b);
-    tx.push_back(ChkXor(tx));
-
-    std::wstring txHex = BytesToHexStr(tx);
-    std::wstring rxHex, parseInfo;
-
-    if (body.size() >= 2 && body[0] == 0x01) {
-        // GetVCPFeature
-        uint8_t vcp = body[1];
-        auto feat = m_monitorMgr->GetVCPFeature(monitorIndex, vcp);
-        rxHex = BuildVCPGetRecvHex(vcp, feat.current, feat.max);
-
-        std::wostringstream info;
-        info << L"GetVCP " << std::hex << std::uppercase << static_cast<int>(vcp)
-             << L": current=" << std::dec << feat.current
-             << L", max=" << feat.max;
-        parseInfo = info.str();
-
-    } else if (body.size() >= 4 && body[0] == 0x03) {
-        // SetVCPFeature
-        uint8_t vcp = body[1];
-        uint32_t value = (static_cast<uint32_t>(body[2]) << 8) | body[3];
-        m_monitorMgr->SetVCP(monitorIndex, vcp, value);
-        rxHex = BuildVCPSetRecvHex();
-
-        std::wostringstream info;
-        info << L"SetVCP " << std::hex << std::uppercase << static_cast<int>(vcp)
-             << L" = " << std::dec << value;
-        parseInfo = info.str();
-
-    } else if (body.size() >= 3 && body[0] == 0xF3) {
-        // Capabilities request (offset in bytes 1-3)
-        auto caps = m_monitorMgr->GetCapabilities(monitorIndex);
-        std::string capsStr = WideToUtf8(caps);
-        rxHex = BuildCapsRecvHex(capsStr);
-
-        parseInfo = L"Capabilities: ";
-        parseInfo += caps.substr(0, 80);
-        if (caps.length() > 80) parseInfo += L"...";
-
-    } else {
-        // Unknown command - can't send via Windows API
-        rxHex = L"";
-        parseInfo = L"Unknown command - display only (TX computed)";
+    RawCommandOutput output;
+    std::wstring error;
+    if (!BuildMonitorRawCommandOutput(m_monitorMgr, monitorIndex, bodyHex, output, error)) {
+        return BuildError(error);
     }
 
     std::wostringstream ss;
     ss << L"{\"type\":\"rawResponse\",\"monitor\":" << monitorIndex
-       << L",\"txHex\":\"" << txHex << L"\""
-       << L",\"rxHex\":\"" << rxHex << L"\""
-       << L",\"parsed\":\"" << EscapeJson(parseInfo) << L"\""
+       << L",\"txHex\":\"" << output.txHex << L"\""
+       << L",\"rxHex\":\"" << output.rxHex << L"\""
+       << L",\"parsed\":\"" << EscapeJson(output.parseInfo) << L"\""
        << L"}";
     return ss.str();
 }
@@ -928,12 +1122,23 @@ std::wstring WebViewBridge::HandleOpenSerialPort(const std::wstring& json) {
     std::wstring portName = ExtractJsonString(json, L"portName");
     if (portName.empty()) return BuildError(L"Missing portName");
 
+    BridgeLog(L"HandleOpenSerialPort: request port=%s", portName.c_str());
+    const int proxyMonitorIndex = FindProxyMonitorIndex(m_monitorMgr, portName);
+    if (proxyMonitorIndex >= 0) {
+        BridgeLog(L"HandleOpenSerialPort: using DXVA2 fallback proxy monitor=%d for port=%s",
+                  proxyMonitorIndex, portName.c_str());
+        return L"{\"type\":\"serialPortOpened\",\"success\":true,\"portName\":\""
+               + EscapeJson(portName) + L"\"}";
+    }
+
     if (!m_serialMgr) return BuildError(L"Serial port manager not available");
 
     if (m_serialMgr->OpenPort(portName)) {
+        BridgeLog(L"HandleOpenSerialPort: opened port=%s", portName.c_str());
         return L"{\"type\":\"serialPortOpened\",\"success\":true,\"portName\":\"" 
                + EscapeJson(portName) + L"\"}";
     } else {
+        BridgeLog(L"HandleOpenSerialPort: failed port=%s", portName.c_str());
         return L"{\"type\":\"serialPortOpened\",\"success\":false,\"portName\":\"" 
                + EscapeJson(portName) + L"\",\"error\":\"Failed to open port\"}";
     }
@@ -951,18 +1156,49 @@ std::wstring WebViewBridge::HandleSendSerialRaw(const std::wstring& json) {
     std::wstring bodyHex = ExtractJsonString(json, L"bodyHex");
 
     if (portName.empty() || bodyHex.empty()) return BuildError(L"Missing parameters");
+
+    std::vector<uint8_t> body = ParseHexString(bodyHex);
+    if (body.empty()) return BuildError(L"Invalid hex body");
+
+    BridgeLog(L"HandleSendSerialRaw: port=%s body=%s", portName.c_str(), bodyHex.c_str());
+    const int proxyMonitorIndex = FindProxyMonitorIndex(m_monitorMgr, portName);
+    if (proxyMonitorIndex >= 0 && IsDxva2ProxySupportedRawBody(body)) {
+        RawCommandOutput output;
+        std::wstring proxyError;
+        if (!BuildMonitorRawCommandOutput(m_monitorMgr, proxyMonitorIndex, bodyHex, output, proxyError)) {
+            BridgeLog(L"HandleSendSerialRaw: DXVA2 fallback failed monitor=%d port=%s err=%s",
+                      proxyMonitorIndex, portName.c_str(), proxyError.c_str());
+            return BuildError(proxyError);
+        }
+
+        BridgeLog(L"HandleSendSerialRaw: DXVA2 fallback monitor=%d port=%s tx=%s rx=%s",
+                  proxyMonitorIndex, portName.c_str(), output.txHex.c_str(), output.rxHex.c_str());
+
+        std::wostringstream ss;
+        ss << L"{\"type\":\"serialRawResponse\""
+           << L",\"portName\":\"" << EscapeJson(portName) << L"\""
+           << L",\"monitor\":" << proxyMonitorIndex
+           << L",\"txHex\":\"" << output.txHex << L"\""
+           << L",\"rxHex\":\"" << output.rxHex << L"\""
+           << L",\"parsed\":\"" << EscapeJson(output.parseInfo) << L"\""
+           << L"}";
+        return ss.str();
+    }
+
+    if (proxyMonitorIndex >= 0) {
+        BridgeLog(L"HandleSendSerialRaw: DXVA2 fallback unsupported for raw body on monitor=%d port=%s, try native transport",
+                  proxyMonitorIndex, portName.c_str());
+    }
+
     if (!m_serialMgr) return BuildError(L"Serial port manager not available");
 
     // Ensure port is open
     if (!m_serialMgr->IsOpen() || m_serialMgr->GetOpenPortName() != portName) {
         if (!m_serialMgr->OpenPort(portName)) {
+            BridgeLog(L"HandleSendSerialRaw: open failed port=%s", portName.c_str());
             return BuildError(L"Failed to open serial port: " + portName);
         }
     }
-
-    // Parse hex body (same logic as BuildRawCommandResponse)
-    std::vector<uint8_t> body = ParseHexString(bodyHex);
-    if (body.empty()) return BuildError(L"Invalid hex body");
 
     // Build TX hex for display
     std::vector<uint8_t> tx = {0x6E, 0x51};
@@ -975,6 +1211,8 @@ std::wstring WebViewBridge::HandleSendSerialRaw(const std::wstring& json) {
     std::vector<uint8_t> rxData;
     std::string error;
     bool ok = m_serialMgr->DDCSendRaw(body, rxData, error);
+    BridgeLog(L"HandleSendSerialRaw: send result=%d rxLen=%zu err=%S",
+              ok ? 1 : 0, rxData.size(), error.c_str());
 
     std::wstring rxHex, parseInfo;
     if (ok && !rxData.empty()) {
@@ -1037,6 +1275,9 @@ std::wstring WebViewBridge::HandleSendSerialRaw(const std::wstring& json) {
         } else {
             parseInfo = L"Response: " + std::to_wstring(rxData.size()) + L" bytes";
         }
+    } else if (ok) {
+        rxHex = L"";
+        parseInfo = L"Write sent successfully (no reply)";
     } else {
         rxHex = L"";
         std::wstring errW(error.begin(), error.end());
@@ -1049,27 +1290,46 @@ std::wstring WebViewBridge::HandleSendSerialRaw(const std::wstring& json) {
        << L",\"rxHex\":\"" << rxHex << L"\""
        << L",\"parsed\":\"" << EscapeJson(parseInfo) << L"\""
        << L"}";
-    return ss.str();
+    std::wstring response = ss.str();
+    BridgeLog(L"HandleSendSerialRaw: response tx=%s rx=%s parsed=%s",
+              txHex.c_str(), rxHex.c_str(), parseInfo.c_str());
+    return response;
 }
 
 // ---- Update check handlers ----
 
 std::wstring WebViewBridge::HandleStartUpdateCheck() {
     std::lock_guard<std::mutex> lock(m_checkMutex);
+    BridgeLog(L"HandleStartUpdateCheck: begin");
 
     // If already in progress and future not yet ready, just return success
     if (m_checkInProgress && m_checkFuture.valid() &&
         m_checkFuture.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+        BridgeLog(L"HandleStartUpdateCheck: already pending");
         return L"{\"success\":true}";
     }
 
-    m_checkFuture = std::async(std::launch::async, UpdateChecker::CheckForUpdate);
-    m_checkInProgress = true;
-    return L"{\"success\":true}";
+    try {
+        m_checkFuture = std::async(std::launch::async, []() {
+            return UpdateChecker::CheckForUpdate();
+        });
+        m_checkInProgress = true;
+        BridgeLog(L"HandleStartUpdateCheck: async launched");
+        return L"{\"success\":true}";
+    } catch (const std::exception& ex) {
+        std::wstring err = Utf8ToWideLocal(ex.what());
+        BridgeLog(L"HandleStartUpdateCheck: std::exception=%s", err.c_str());
+        return BuildError(L"startUpdateCheck failed: " + err);
+    } catch (...) {
+        BridgeLog(L"HandleStartUpdateCheck: unknown exception");
+        return BuildError(L"startUpdateCheck failed");
+    }
 }
 
 std::wstring WebViewBridge::HandlePollUpdateCheck() {
     std::lock_guard<std::mutex> lock(m_checkMutex);
+    BridgeLog(L"HandlePollUpdateCheck: begin inProgress=%d valid=%d",
+              m_checkInProgress ? 1 : 0, m_checkFuture.valid() ? 1 : 0);
 
     if (!m_checkInProgress || !m_checkFuture.valid()) {
         return L"{\"success\":true,\"pending\":false,\"hasUpdate\":false}";

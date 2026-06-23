@@ -1,6 +1,7 @@
 #include "UpdateChecker.h"
 #include <winhttp.h>
 #include <shellapi.h>
+#include <cstdarg>
 #include <cwctype>
 #include <sstream>
 #include <vector>
@@ -10,6 +11,45 @@
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "version.lib")
 #pragma comment(lib, "shell32.lib")
+
+namespace {
+
+void UC_WriteLog(const WCHAR* fmt, ...) {
+#ifdef _DEBUG
+    WCHAR path[MAX_PATH];
+    GetModuleFileNameW(nullptr, path, MAX_PATH);
+    std::wstring logPath(path);
+    size_t lastSlash = logPath.find_last_of(L"\\/");
+    if (lastSlash != std::wstring::npos) {
+        logPath = logPath.substr(0, lastSlash);
+    }
+    logPath += L"\\debug.log";
+
+    WCHAR buf[512];
+    va_list args;
+    va_start(args, fmt);
+    _vsnwprintf_s(buf, _TRUNCATE, fmt, args);
+    va_end(args);
+
+    HANDLE hFile = CreateFileW(logPath.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ,
+                               nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hFile != INVALID_HANDLE_VALUE) {
+        int len = WideCharToMultiByte(CP_UTF8, 0, buf, -1, nullptr, 0, nullptr, nullptr);
+        if (len > 1) {
+            std::string line(static_cast<size_t>(len - 1), '\0');
+            WideCharToMultiByte(CP_UTF8, 0, buf, -1, line.data(), len - 1, nullptr, nullptr);
+            line += "\r\n";
+            DWORD written = 0;
+            WriteFile(hFile, line.c_str(), static_cast<DWORD>(line.size()), &written, nullptr);
+        }
+        CloseHandle(hFile);
+    }
+#else
+    (void)fmt;
+#endif
+}
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // UTF-8 <-> wstring conversion
@@ -334,40 +374,52 @@ bool UpdateChecker::ParseAssetInfo(const std::wstring& json, UpdateInfo& info) {
 
 UpdateInfo UpdateChecker::CheckForUpdate() {
     UpdateInfo info;
-    info.currentVersion = GetCurrentVersion();
+    try {
+        UC_WriteLog(L"UpdateChecker::CheckForUpdate begin");
+        info.currentVersion = GetCurrentVersion();
+        UC_WriteLog(L"UpdateChecker::CheckForUpdate current=%s", info.currentVersion.c_str());
 
-    std::wstring json = HttpGet(GITHUB_API);
-    if (json.empty()) {
-        info.error = L"Failed to connect to GitHub API";
-        return info;
-    }
-
-    // Check for API error — GitHub returns {"message": "..."} on errors
-    std::wstring message = ParseJsonString(json, L"message");
-    if (!message.empty()) {
-        // Friendly message for rate limit
-        if (message.find(L"rate limit") != std::wstring::npos) {
-            info.error = L"GitHub API rate limit exceeded. Please try again later.";
-        } else {
-            // Truncate other long error messages
-            if (message.size() > 120) message = message.substr(0, 120);
-            info.error = message;
+        std::wstring json = HttpGet(GITHUB_API);
+        UC_WriteLog(L"UpdateChecker::CheckForUpdate HttpGet size=%zu", json.size());
+        if (json.empty()) {
+            info.error = L"Failed to connect to GitHub API";
+            return info;
         }
-        return info;
+
+        // Check for API error — GitHub returns {"message": "..."} on errors
+        std::wstring message = ParseJsonString(json, L"message");
+        if (!message.empty()) {
+            if (message.find(L"rate limit") != std::wstring::npos) {
+                info.error = L"GitHub API rate limit exceeded. Please try again later.";
+            } else {
+                if (message.size() > 120) message = message.substr(0, 120);
+                info.error = message;
+            }
+            UC_WriteLog(L"UpdateChecker::CheckForUpdate api error=%s", info.error.c_str());
+            return info;
+        }
+
+        info.latestVersion = NormalizeVersion(ParseJsonString(json, L"tag_name"));
+        info.releaseUrl = ParseJsonString(json, L"html_url");
+        info.releaseNotes = ParseJsonString(json, L"body");
+
+        if (info.latestVersion.empty()) {
+            info.error = L"Could not parse version from release";
+            UC_WriteLog(L"UpdateChecker::CheckForUpdate parse failed");
+            return info;
+        }
+
+        ParseAssetInfo(json, info);
+        info.hasUpdate = IsNewer(info.latestVersion, info.currentVersion);
+        UC_WriteLog(L"UpdateChecker::CheckForUpdate done latest=%s hasUpdate=%d",
+                    info.latestVersion.c_str(), info.hasUpdate ? 1 : 0);
+    } catch (const std::exception& ex) {
+        info.error = Utf8ToWide(ex.what());
+        UC_WriteLog(L"UpdateChecker::CheckForUpdate std::exception=%s", info.error.c_str());
+    } catch (...) {
+        info.error = L"Unknown exception in CheckForUpdate";
+        UC_WriteLog(L"UpdateChecker::CheckForUpdate unknown exception");
     }
-
-    info.latestVersion = NormalizeVersion(ParseJsonString(json, L"tag_name"));
-    info.releaseUrl = ParseJsonString(json, L"html_url");
-    info.releaseNotes = ParseJsonString(json, L"body");
-
-    if (info.latestVersion.empty()) {
-        info.error = L"Could not parse version from release";
-        return info;
-    }
-
-    ParseAssetInfo(json, info);
-
-    info.hasUpdate = IsNewer(info.latestVersion, info.currentVersion);
     return info;
 }
 

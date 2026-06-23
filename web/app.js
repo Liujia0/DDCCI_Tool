@@ -1375,6 +1375,6 @@
         }
     }
     init();
-    // Silent update check 2s after start; if a new version is found, the modal pops up.
-    setTimeout(function () { try { checkForUpdates(true); } catch (e) {} }, 2000);
+    // Keep update checks manual only. Silent startup checks have caused
+    // instability on some machines and can interfere with hardware debugging.
 })();

@@ -40,6 +40,8 @@ private:
     bool DDCSendRawI2CDevWriteReadRestart(const std::vector<uint8_t>& txPacket, std::vector<uint8_t>& rxData, std::string& error);
     bool DDCSendRawI2CDevWriteThenRead(const std::vector<uint8_t>& txPacket, std::vector<uint8_t>& rxData, std::string& error);
     bool DDCSendRawI2CDevWriteThenAutoRead(const std::vector<uint8_t>& txPacket, std::vector<uint8_t>& rxData, std::string& error);
+    bool DDCSendRawI2CDevWriteOnly(const std::vector<uint8_t>& txPacket, std::string& error);
+    bool DDCReadReplyI2CDevAfterWrite(std::vector<uint8_t>& rxData, std::string& error);
     bool ExtractFirstValidDDCReply(const std::vector<uint8_t>& rawData, std::vector<uint8_t>& packet, std::string& reason) const;
     bool IsValidDDCReply(const std::vector<uint8_t>& packet, std::string& reason) const;
     bool IsRestartPreferredDevice() const;
